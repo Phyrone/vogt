@@ -1,4 +1,9 @@
 <script lang="ts">
+	import Cherry from '@lucide/svelte/icons/cherry';
+	import GitCommitHorizontal from '@lucide/svelte/icons/git-commit-horizontal';
+	import ListRestart from '@lucide/svelte/icons/list-restart';
+	import PencilLine from '@lucide/svelte/icons/pencil-line';
+	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
 	import type { Commit, Line } from '#lib/repo/types.ts';
 	import LineBadge from './LineBadge.svelte';
 
@@ -21,11 +26,21 @@
 	<h2 class="signage text-xl leading-snug font-semibold text-balance">{commit.subject}</h2>
 	{#if commit.body}<p class="max-w-prose text-base-content/80">{commit.body}</p>{/if}
 	<div class="flex flex-wrap gap-1.5">
-		{#if isHead}<button type="button" class="btn btn-sm">Amend</button>{/if}
-		<button type="button" class="btn btn-sm">Reword</button>
-		<button type="button" class="btn btn-sm">Cherry-pick</button>
-		<button type="button" class="btn btn-sm">Revert</button>
-		<button type="button" class="btn btn-sm">Rebase from here</button>
+		{#if isHead}<button type="button" class="btn btn-sm"
+				><GitCommitHorizontal class="size-4" aria-hidden="true" />Amend</button
+			>{/if}
+		<button type="button" class="btn btn-sm"
+			><PencilLine class="size-4" aria-hidden="true" />Reword</button
+		>
+		<button type="button" class="btn btn-sm"
+			><Cherry class="size-4" aria-hidden="true" />Cherry-pick</button
+		>
+		<button type="button" class="btn btn-sm"
+			><RotateCcw class="size-4" aria-hidden="true" />Revert</button
+		>
+		<button type="button" class="btn btn-sm"
+			><ListRestart class="size-4" aria-hidden="true" />Rebase from here</button
+		>
 	</div>
 	{#if commit.files.length}
 		<h3 class="mt-3 caps text-base-content/70">

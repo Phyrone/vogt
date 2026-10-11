@@ -1,4 +1,5 @@
 <script lang="ts">
+	import GitCommitHorizontal from '@lucide/svelte/icons/git-commit-horizontal';
 	import { lineStyle, type FileChange, type Line } from '#lib/repo/types.ts';
 
 	interface Props {
@@ -124,6 +125,7 @@
 		style={lineStyle(line)}
 		disabled={!ready}
 	>
+		<GitCommitHorizontal class="size-5" aria-hidden="true" />
 		Commit {staged}
 		{staged === 1 ? 'file' : 'files'} to {line.name}
 	</button>

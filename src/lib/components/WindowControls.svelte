@@ -1,4 +1,8 @@
 <script lang="ts">
+	import Copy from '@lucide/svelte/icons/copy';
+	import Minus from '@lucide/svelte/icons/minus';
+	import Square from '@lucide/svelte/icons/square';
+	import X from '@lucide/svelte/icons/x';
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 
 	interface Props {
@@ -18,9 +22,7 @@
 		title="Minimize"
 		onclick={() => appWindow.minimize()}
 	>
-		<svg class="size-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-			<path d="M3.5 8h9" stroke-linecap="round" />
-		</svg>
+		<Minus class="size-4" aria-hidden="true" />
 	</button>
 	<button
 		type="button"
@@ -29,20 +31,10 @@
 		title={maximized ? 'Restore' : 'Maximize'}
 		onclick={() => appWindow.toggleMaximize()}
 	>
-		<svg
-			class="size-4"
-			viewBox="0 0 16 16"
-			fill="none"
-			stroke="currentColor"
-			stroke-width="1.5"
-			stroke-linejoin="round"
-		>
-			{#if maximized}
-				<path d="M3.5 5.5h7v7h-7zM5.5 5.5v-2h7v7h-2" />
-			{:else}
-				<path d="M3.5 3.5h9v9h-9z" />
-			{/if}
-		</svg>
+		{#if maximized}<Copy class="size-3.5 -scale-x-100" aria-hidden="true" />{:else}<Square
+				class="size-3.5"
+				aria-hidden="true"
+			/>{/if}
 	</button>
 	<button
 		type="button"
@@ -51,8 +43,6 @@
 		title="Close"
 		onclick={() => appWindow.close()}
 	>
-		<svg class="size-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-			<path d="m4 4 8 8M12 4l-8 8" stroke-linecap="round" />
-		</svg>
+		<X class="size-4" aria-hidden="true" />
 	</button>
 </div>

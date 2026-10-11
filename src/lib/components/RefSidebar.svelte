@@ -1,4 +1,6 @@
 <script lang="ts">
+	import Archive from '@lucide/svelte/icons/archive';
+	import Tag from '@lucide/svelte/icons/tag';
 	import { lineStyle, type Line } from '#lib/repo/types.ts';
 	import LineBadge from './LineBadge.svelte';
 
@@ -62,14 +64,22 @@
 		<ul class="menu w-full gap-0.5 px-2 py-0">
 			{#each stashes as stash (stash)}
 				<li>
-					<button type="button" class="pl-[42px]"><span class="truncate">{stash}</span></button>
+					<button type="button" class="gap-2.5 px-2">
+						<Archive class="mx-[3px] size-4 shrink-0 opacity-60" aria-hidden="true" /><span
+							class="truncate">{stash}</span
+						>
+					</button>
 				</li>
 			{/each}
 		</ul>
 		<h2 class="px-4 pt-4 pb-1 caps text-base-content/70">Tags</h2>
 		<ul class="menu w-full gap-0.5 px-2 py-0">
 			{#each tags as tag (tag)}
-				<li><button type="button" class="pl-[42px]">{tag}</button></li>
+				<li>
+					<button type="button" class="gap-2.5 px-2">
+						<Tag class="mx-[3px] size-4 shrink-0 opacity-60" aria-hidden="true" />{tag}
+					</button>
+				</li>
 			{/each}
 		</ul>
 	</div>

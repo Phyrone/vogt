@@ -117,6 +117,7 @@ Flat. Panes are divided by rules, selection by a tint of the row's line colour. 
 - **Branch sidebar** (`RefSidebar.svelte`): choosing a branch dims every other line and its rows. This is the signature interaction.
 - **Commit composer** (`CommitComposer.svelte`): staging, type and scope chips, subject with a 50-character counter, and the assembled gitmoji + Conventional Commits header.
 - Buttons, inputs, selects, checkboxes, badges and menus are stock daisyUI components.
+- Icons are Lucide (`@lucide/svelte`), imported one by one from `@lucide/svelte/icons/<name>` at 16px with the default stroke. Toolbar actions keep a text label where there is room and fall back to the icon with a tooltip; an icon never replaces a line badge.
 
 ## Do's and Don'ts
 
