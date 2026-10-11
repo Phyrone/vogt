@@ -8,9 +8,13 @@
 		label: Snippet;
 		/** The choices. */
 		children: Snippet;
+		/** Which edge the content aligns to; `end` keeps it inside the window at the right edge. */
+		align?: 'start' | 'end';
+		/** Tooltip for the trigger when it falls back to its icon. */
+		title?: string;
 	}
 
-	let { label, children }: Props = $props();
+	let { label, children, align = 'start', title }: Props = $props();
 
 	let open = $state(false);
 	let root: HTMLDetailsElement;
@@ -29,8 +33,8 @@
 	}}
 />
 
-<details class="dropdown" bind:open bind:this={root}>
-	<summary class="btn btn-ghost font-semibold btn-sm"
+<details class={['dropdown', align === 'end' && 'dropdown-end']} bind:open bind:this={root}>
+	<summary class="btn btn-ghost font-semibold btn-sm" {title}
 		>{@render label()}<ChevronDown class="size-3.5 opacity-60" aria-hidden="true" /></summary
 	>
 	<div

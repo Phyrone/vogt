@@ -77,3 +77,40 @@ test('picking branches masks the history to their lines', async ({ page }) => {
 	await expect(strip).toHaveCount(0);
 	await expect(rows).toHaveCount(all);
 });
+
+test('opens the app settings from the window menu and remembers the choices', async ({ page }) => {
+	await page.goto('/');
+	await page.locator('summary', { hasText: 'Settings' }).click();
+	await page.getByRole('link', { name: 'App settings' }).click();
+	await expect(page).toHaveURL(/\/settings$/);
+	await expect(page.getByRole('heading', { level: 1, name: 'Settings' })).toBeVisible();
+	await expect(page.getByText(/^v\d+\.\d+\.\d+$/)).toBeVisible();
+
+	await page.getByLabel('Theme').selectOption('nord');
+	await expect(page.locator('html')).toHaveAttribute('data-theme', 'nord');
+	await page.getByLabel('Language').selectOption('de');
+	await expect(page.locator('html')).toHaveAttribute('lang', 'de');
+});
+
+test('the settings that need the desktop app say so', async ({ page }) => {
+	await page.goto('/settings');
+	await expect(page.getByRole('button', { name: 'Open' }).first()).toBeDisabled();
+
+	await page.getByRole('button', { name: 'Rebuild' }).click();
+	await expect(page.getByText('Caches can only be rebuilt in the desktop app')).toBeVisible();
+
+	await page.getByRole('button', { name: 'Check for updates' }).click();
+	await expect(page.getByText('Update checks need the desktop app')).toBeVisible();
+});
+
+test('opens the repository settings from the sidebar and the window menu', async ({ page }) => {
+	await page.goto('/workspaces/ws-personal/repos/repo-vogt/history');
+	await page.getByRole('link', { name: 'Settings' }).click();
+	await expect(page).toHaveURL(/\/repos\/repo-vogt\/settings\?worktree=/);
+	await expect(page.getByRole('heading', { level: 1, name: 'Repository settings' })).toBeVisible();
+	await expect(page.getByText('Nothing to set here yet')).toBeVisible();
+
+	await page.locator('summary', { hasText: 'Settings' }).click();
+	await page.getByRole('link', { name: 'Repository settings' }).click();
+	await expect(page).toHaveURL(/\/repos\/repo-vogt\/settings\?worktree=/);
+});

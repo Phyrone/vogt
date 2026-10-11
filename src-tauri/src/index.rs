@@ -509,6 +509,13 @@ pub async fn forget_repo<R: tauri::Runtime>(
         .map(|file| file.to_string_lossy().into_owned())
 }
 
+/// Drops every repository cache and lets the indexer build them again.
+/// Not implemented yet; the settings page already offers the action.
+#[tauri::command]
+pub async fn rebuild_caches() -> Result<(), String> {
+    Err("Clearing and rebuilding caches is not implemented yet".to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

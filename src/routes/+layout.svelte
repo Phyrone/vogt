@@ -6,8 +6,17 @@
 	import '@fontsource/barlow-semi-condensed/700.css';
 	import '@fontsource-variable/jetbrains-mono';
 	import '../app.css';
+	import { installMenu } from '#lib/menu.ts';
+	import { appSettings } from '#lib/settings/app.svelte.ts';
 
 	const { children } = $props();
+
+	// the theme and the language live on the document, so every page follows them
+	$effect(() => appSettings.apply());
+	// the native window menu, once per app run
+	$effect(() => {
+		void installMenu().catch((reason) => console.error('vogt: no window menu', reason));
+	});
 </script>
 
 <!-- every page fills the window: a title bar of its own, then its content -->

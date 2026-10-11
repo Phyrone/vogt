@@ -1,13 +1,13 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { trackWindow, windowChrome } from '#lib/window.svelte.ts';
-	import ThemeSelect from './ThemeSelect.svelte';
+	import SettingsMenu from './SettingsMenu.svelte';
 	import WindowControls from './WindowControls.svelte';
 
 	interface Props {
 		/** Leading controls. */
 		children?: Snippet;
-		/** Controls grouped at the trailing end, before the theme and the window controls. */
+		/** Controls grouped at the trailing end, before the settings menu and the window controls. */
 		tools?: Snippet;
 	}
 
@@ -27,7 +27,7 @@
 	{@render children?.()}
 	<div class="ml-auto flex items-center gap-2" data-tauri-drag-region>
 		{@render tools?.()}
-		<ThemeSelect />
+		<SettingsMenu />
 		{#if windowChrome === 'custom'}
 			<WindowControls maximized={appWindow.maximized} />
 		{/if}

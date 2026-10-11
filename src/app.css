@@ -3,6 +3,12 @@
 	themes: all;
 }
 
+/* the "System theme" option follows the system: light, or dark when the system prefers it */
+@plugin 'daisyui/theme' {
+	name: 'dark';
+	prefersdark: true;
+}
+
 @theme {
 	--font-sans: 'Barlow', ui-sans-serif, system-ui, sans-serif;
 	--font-signage: 'Barlow Semi Condensed', 'Barlow', ui-sans-serif, sans-serif;

@@ -4,6 +4,7 @@
 	import Archive from '@lucide/svelte/icons/archive';
 	import Eye from '@lucide/svelte/icons/eye';
 	import Tag from '@lucide/svelte/icons/tag';
+	import type { ResolvedPathname } from '$app/types';
 	import { lineStyle, type Line } from '#lib/repo/types.ts';
 
 	interface Props {
@@ -14,9 +15,19 @@
 		tags: string[];
 		/** Ids of the lines the history is masked to; none means every line shows. */
 		picked: string[];
+		/** Where this repository's settings live. */
+		settingsHref: ResolvedPathname;
 	}
 
-	let { lines, headLine, ahead, stashes, tags, picked = $bindable() }: Props = $props();
+	let {
+		lines,
+		headLine,
+		ahead,
+		stashes,
+		tags,
+		picked = $bindable(),
+		settingsHref
+	}: Props = $props();
 
 	const local = $derived(lines.filter((l) => !l.merged));
 
@@ -119,15 +130,15 @@
 		</div>
 	</div>
 	<div class="flex shrink-0 flex-col items-center gap-1 border-t border-base-300 p-2 lg:flex-row">
-		<button
-			type="button"
+		<a
 			class="btn btn-ghost btn-sm max-lg:btn-square lg:flex-1 lg:justify-start"
+			href={settingsHref}
 			title="Settings"
 		>
 			<Settings class="size-4 opacity-70" aria-hidden="true" /><span class="hidden lg:inline"
 				>Settings</span
 			><span class="sr-only lg:hidden">Settings</span>
-		</button>
+		</a>
 		<button
 			type="button"
 			class="btn btn-ghost btn-sm max-lg:btn-square lg:flex-1 lg:justify-start"

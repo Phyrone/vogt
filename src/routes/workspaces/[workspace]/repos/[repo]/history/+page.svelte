@@ -4,11 +4,15 @@
 	import History from '#lib/components/History.svelte';
 	import RefSidebar from '#lib/components/RefSidebar.svelte';
 	import type { Commit } from '#lib/repo/types.ts';
+	import { repoSettingsPath } from '#lib/settings/links.ts';
 
 	let { data } = $props();
 
 	const session = $derived(data.session);
 	const { lines, headLine } = $derived(session);
+	const settingsHref = $derived(
+		repoSettingsPath(data.workspace.id, data.repo.id, data.worktree?.path)
+	);
 
 	// nothing selected is the working changes, or the checked-out commit once the history has it
 	let selected = $state<Commit | null>(null);
@@ -28,6 +32,7 @@
 		ahead={session.ahead}
 		stashes={session.stashes}
 		tags={session.tags}
+		{settingsHref}
 		bind:picked
 	/>
 	<main class="flex min-w-0 flex-1">

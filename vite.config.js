@@ -10,13 +10,16 @@ import adapter from '@sveltejs/adapter-static';
 
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { readFileSync } from 'node:fs';
 import process from 'node:process';
 const host = process.env.TAURI_DEV_HOST;
 // GitHub Actions sets CI; the extra reporters only make sense there
 const ci = Boolean(process.env.CI);
-
+// the app's own version, shown in its settings; kept in step with tauri.conf.json and Cargo.toml
+const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
 // https://vite.dev/config/
 export default defineConfig({
+	define: { __APP_VERSION__: JSON.stringify(version) },
 	plugins: [
 		tailwindcss(),
 		sveltekit({

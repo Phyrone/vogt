@@ -32,7 +32,8 @@ pub fn run() {
             history::materialize_view,
             history::commit_files,
             index::sync_repositories,
-            index::forget_repo
+            index::forget_repo,
+            index::rebuild_caches
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
