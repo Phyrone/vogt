@@ -10,4 +10,7 @@
 	const { children } = $props();
 </script>
 
-{@render children()}
+<!-- every page fills the window: a title bar of its own, then its content -->
+<div class="flex h-dvh flex-col bg-base-100 text-sm">
+	{@render children()}
+</div>

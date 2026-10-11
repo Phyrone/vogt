@@ -6,7 +6,7 @@ Guidance for AI agents working in this repository, whichever agent is running. `
 
 VOGT (Version & Operations GUI Tool) is a desktop app: a SvelteKit frontend in `src/` inside a Tauri 2 shell in `src-tauri/`.
 
-**Everything under `src/` and `src-tauri/src/` is still the create-tauri-app template** — the `greet` command, the demo page and its styles are placeholders. Replace them; they set no convention.
+The app shell exists: routes, a title bar with workspace and repository switchers, and a registry of workspaces and repositories in Rust. **Repository contents are still synthetic** — every repository shows `src/lib/repo/mock.ts` through `RepoSession`, and no git command exists yet. `src/lib/vitest-examples/` is template leftover and sets no convention.
 
 ## Architecture
 
@@ -15,6 +15,10 @@ VOGT (Version & Operations GUI Tool) is a desktop app: a SvelteKit frontend in `
 - A new command works only once it is listed in `tauri::generate_handler![...]` in [src-tauri/src/lib.rs](src-tauri/src/lib.rs).
 - A plugin or core API works only once its permission is granted in [src-tauri/capabilities/default.json](src-tauri/capabilities/default.json); without it the call is rejected at runtime, not at build time.
 - Frontend code is Svelte 5 with runes and TypeScript in strict mode.
+- **Routes carry ids, never paths or names:** `/workspaces/[workspace]` lists a workspace's repositories and `/workspaces/[workspace]/repos/[repo]/<view>` is one view of a repository (`history` so far). The ids are issued by the Rust registry in [src-tauri/src/registry.rs](src-tauri/src/registry.rs), which keeps them in memory only; persistence is to be added behind the same commands.
+- **Layouts load, pages render:** the root `+layout.ts` loads the workspaces, each `[param]` layout resolves its id from the parent data or fails with a 404, and the repository layout creates the `RepoSession` its pages share. Build links with `resolve` from `$app/paths`.
+- **The frontend reaches the registry only through [src/lib/registry/api.ts](src/lib/registry/api.ts)**, which answers from `mock.ts` outside the Tauri shell so every route also renders in a plain browser and in the end-to-end tests. After a change, `invalidate(REGISTRY)`.
+- **Every page draws its own title bar** — `Toolbar`, or the bare `TitleBar` — because the window has no native one.
 
 ## Commands
 
