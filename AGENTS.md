@@ -20,15 +20,17 @@ VOGT (Version & Operations GUI Tool) is a desktop app: a SvelteKit frontend in `
 
 `pnpm dev` and `pnpm build` drive the **whole desktop app** through Tauri, including the Rust build. The frontend alone is `pnpm vite:dev` and `pnpm vite:build`.
 
-Verify a change with both checks:
+Verify a change with all three checks:
 
 ```bash
 pnpm check                      # svelte-check, frontend types
+pnpm lint                       # prettier --check and eslint; fix formatting with pnpm format
 cd src-tauri && cargo check     # Rust; there is no Cargo workspace at the root
 ```
 
 - The dev server is pinned to port 1420 and fails instead of picking another one. A leftover `pnpm dev` is the usual cause.
-- No test runner, linter or formatter is configured yet. Match the surrounding style, and ask before adding one.
+- Prettier and ESLint skip `src-tauri/` and the agent tooling directories; Rust is formatted with `cargo fmt`.
+- No test runner is configured yet. Ask before adding one.
 
 ## Conventions
 
