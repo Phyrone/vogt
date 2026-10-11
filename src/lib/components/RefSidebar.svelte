@@ -1,8 +1,9 @@
 <script lang="ts">
+	import Keyboard from '@lucide/svelte/icons/keyboard';
+	import Settings from '@lucide/svelte/icons/settings';
 	import Archive from '@lucide/svelte/icons/archive';
 	import Tag from '@lucide/svelte/icons/tag';
 	import { lineStyle, type Line } from '#lib/repo/types.ts';
-	import LineBadge from './LineBadge.svelte';
 
 	interface Props {
 		lines: Line[];
@@ -16,71 +17,103 @@
 	let { lines, headLine, ahead, stashes, tags, focusLine = $bindable() }: Props = $props();
 
 	const local = $derived(lines.filter((l) => !l.merged));
-	const remote = $derived(local.filter((l) => l.remote));
 </script>
 
 <nav
-	class="w-14 shrink-0 overflow-y-auto border-r border-base-300 bg-base-200 pb-4 lg:w-60"
-	aria-label="Branches, stashes and tags"
+	class="flex w-14 shrink-0 flex-col border-r border-base-300 bg-base-200 lg:w-60"
+	aria-label="Branches, stashes, tags and settings"
 >
-	<h2 class="hidden px-4 pt-4 pb-1 caps text-base-content/70 lg:block">Local</h2>
-	<ul class="menu w-full gap-0.5 px-2 pt-3 lg:pt-0">
-		{#each local as line (line.id)}
-			<li>
-				<button
-					type="button"
-					class={[
-						'justify-center gap-2.5 px-2 lg:justify-start',
-						focusLine === line.id && 'bg-(--line)/15 font-semibold'
-					]}
-					style={lineStyle(line)}
-					aria-pressed={focusLine === line.id}
-					title="Highlight {line.name} in the graph"
-					onclick={() => (focusLine = focusLine === line.id ? null : line.id)}
-				>
-					<LineBadge {line} />
-					<span class="hidden min-w-0 flex-1 truncate lg:block">{line.name}</span>
-					<span class="sr-only lg:hidden">{line.name}</span>
-					{#if line.id === headLine && ahead > 0}
-						<span class="hidden font-mono text-[11px] font-normal lg:block">{ahead} ahead</span>
-					{/if}
-				</button>
-			</li>
-		{/each}
-	</ul>
-	<div class="hidden lg:block">
-		<h2 class="px-4 pt-4 pb-1 caps text-base-content/70">Remote · origin</h2>
-		<ul class="menu w-full gap-0.5 px-2 py-0">
-			{#each remote as line (line.id)}
+	<div class="min-h-0 flex-1 overflow-y-auto pb-4">
+		<ol
+			class="relative flex flex-col gap-0.5 px-2 pt-4 before:absolute before:top-7 before:bottom-5 before:left-[25px] before:w-1.5 before:rounded-full before:bg-base-300 lg:px-3 lg:before:left-[29px]"
+		>
+			{#each local as line (line.id)}
 				<li>
-					<button type="button" class="gap-2.5 px-2">
-						<LineBadge {line} />
-						<span class="min-w-0 flex-1 truncate">{line.name}</span>
+					<button
+						type="button"
+						class={[
+							'relative flex w-full cursor-pointer items-center gap-3 rounded-field px-1 py-1.5 text-left',
+							focusLine === line.id ? 'bg-(--line)/15' : 'hover:bg-base-content/5'
+						]}
+						style={lineStyle(line)}
+						aria-pressed={focusLine === line.id}
+						title="Highlight {line.name} in the graph"
+						onclick={() => (focusLine = focusLine === line.id ? null : line.id)}
+					>
+						<span
+							class={[
+								'grid size-8 shrink-0 place-items-center rounded-[7px] bg-(--line) signage text-lg leading-none text-(--line-content)',
+								line.id === headLine &&
+									'ring-2 ring-base-content ring-offset-2 ring-offset-base-200'
+							]}
+							aria-hidden="true">{line.badge}</span
+						>
+						<span class="hidden min-w-0 flex-1 lg:block">
+							<span class="block truncate signage text-[15px] leading-tight font-semibold"
+								>{line.name}</span
+							>
+							<span class="block truncate text-xs text-base-content/65"
+								>{#if line.id === headLine}checked out{ahead > 0
+										? ` · ${ahead} ahead`
+										: ''}{:else if line.remote}on origin{:else}local only{/if}</span
+							>
+						</span>
+						<span class="sr-only lg:hidden">{line.name}</span>
 					</button>
 				</li>
 			{/each}
-		</ul>
-		<h2 class="px-4 pt-4 pb-1 caps text-base-content/70">Stashes</h2>
-		<ul class="menu w-full gap-0.5 px-2 py-0">
+		</ol>
+		<h2
+			class="hidden items-baseline justify-between px-4 pt-6 pb-1.5 caps text-base-content/60 lg:flex"
+		>
+			<span>Stashes</span><span class="font-mono text-[11px] font-normal tracking-normal"
+				>{stashes.length}</span
+			>
+		</h2>
+		<ul class="menu hidden w-full gap-px menu-sm px-2 py-0 lg:flex">
 			{#each stashes as stash (stash)}
 				<li>
-					<button type="button" class="gap-2.5 px-2">
-						<Archive class="mx-[3px] size-4 shrink-0 opacity-60" aria-hidden="true" /><span
+					<button type="button" class="gap-2.5 px-2"
+						><Archive class="mx-[3px] size-4 shrink-0 opacity-60" aria-hidden="true" /><span
 							class="truncate">{stash}</span
-						>
-					</button>
+						></button
+					>
 				</li>
 			{/each}
 		</ul>
-		<h2 class="px-4 pt-4 pb-1 caps text-base-content/70">Tags</h2>
-		<ul class="menu w-full gap-0.5 px-2 py-0">
+		<h2
+			class="hidden items-baseline justify-between px-4 pt-6 pb-1.5 caps text-base-content/60 lg:flex"
+		>
+			<span>Tags</span><span class="font-mono text-[11px] font-normal tracking-normal"
+				>{tags.length}</span
+			>
+		</h2>
+		<div class="hidden flex-wrap gap-1.5 px-4 lg:flex">
 			{#each tags as tag (tag)}
-				<li>
-					<button type="button" class="gap-2.5 px-2">
-						<Tag class="mx-[3px] size-4 shrink-0 opacity-60" aria-hidden="true" />{tag}
-					</button>
-				</li>
+				<button type="button" class="badge cursor-pointer gap-1 badge-outline signage"
+					><Tag class="size-3" aria-hidden="true" />{tag}</button
+				>
 			{/each}
-		</ul>
+		</div>
+	</div>
+	<div class="flex shrink-0 flex-col items-center gap-1 border-t border-base-300 p-2 lg:flex-row">
+		<button
+			type="button"
+			class="btn btn-ghost btn-sm max-lg:btn-square lg:flex-1 lg:justify-start"
+			title="Settings"
+		>
+			<Settings class="size-4 opacity-70" aria-hidden="true" /><span class="hidden lg:inline"
+				>Settings</span
+			><span class="sr-only lg:hidden">Settings</span>
+		</button>
+		<button
+			type="button"
+			class="btn btn-ghost btn-sm max-lg:btn-square lg:flex-1 lg:justify-start"
+			title="Keyboard shortcuts"
+		>
+			<Keyboard class="size-4 opacity-70" aria-hidden="true" /><span class="hidden lg:inline"
+				>Shortcuts</span
+			><span class="sr-only lg:hidden">Keyboard shortcuts</span>
+		</button>
 	</div>
 </nav>
