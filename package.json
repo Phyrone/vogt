@@ -19,6 +19,7 @@
 		"skills": "skills",
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write .",
+		"fmt": "prettier --write .",
 		"test": "pnpm test:unit --run && pnpm test:rust && pnpm test:e2e",
 		"test:rust": "cargo nextest run",
 		"test:unit": "vitest",
