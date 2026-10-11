@@ -263,3 +263,5 @@ vite.config.ts.timestamp-*
 # Agent tooling, local state
 .claude/settings.local.json
 .worktrees/
+# Playwright
+test-results
