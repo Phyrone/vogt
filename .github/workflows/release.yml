@@ -90,12 +90,21 @@ jobs:
             target: universal-apple-darwin
             rustup: aarch64-apple-darwin x86_64-apple-darwin
           # an older Ubuntu, so the bundles also start where glibc is older
-          - name: Linux
+          - name: Linux, x64
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-          - name: Windows
+          - name: Linux, ARM
+            os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+          - name: Windows, x64
             os: windows-latest
             target: x86_64-pc-windows-msvc
+          # Off until it has been tried: cross-compiled on the x64 runner, the
+          # way Tauri documents it, with libsodium and ring as the open questions.
+          # - name: Windows, ARM
+          #   os: windows-latest
+          #   target: aarch64-pc-windows-msvc
+          #   rustup: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
