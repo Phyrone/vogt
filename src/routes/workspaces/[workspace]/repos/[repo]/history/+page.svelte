@@ -12,7 +12,8 @@
 	const { lines, headLine } = $derived(session);
 
 	let selected = $state(untrack(() => (session.changes.length ? WORKING : session.head)));
-	let focusLine = $state<string | null>(null);
+	// the lines picked in the sidebar: a mask over the history, not a place to go
+	let picked = $state<string[]>([]);
 
 	const commit = $derived(session.commits.find((c) => c.hash === selected));
 
@@ -29,7 +30,7 @@
 		ahead={session.ahead}
 		stashes={session.stashes}
 		tags={session.tags}
-		bind:focusLine
+		bind:picked
 	/>
 	<main class="flex min-w-0 flex-1">
 		<History
@@ -38,7 +39,7 @@
 			trunk={session.trunk}
 			head={session.head}
 			bind:selected
-			{focusLine}
+			bind:picked
 		/>
 	</main>
 	<aside

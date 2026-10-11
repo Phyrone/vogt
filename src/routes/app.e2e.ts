@@ -54,3 +54,26 @@ test('creates a new repository in the workspace', async ({ page }) => {
 	await expect(page.getByRole('heading', { level: 1, name: 'playground' })).toBeVisible();
 	await expect(page.getByRole('region', { name: 'History' })).toBeVisible();
 });
+
+test('picking branches masks the history to their lines', async ({ page }) => {
+	await page.goto('/workspaces/ws-personal/repos/repo-vogt/history');
+	const branches = page.getByRole('list', { name: 'Show only these branches' });
+	const rows = page.getByRole('region', { name: 'History' }).locator('[data-hash]');
+	await expect(rows.first()).toBeVisible();
+	const all = await rows.count();
+
+	await branches.getByRole('button', { name: /fix\/rebase-abort/ }).click();
+	await branches.getByRole('button', { name: /feat\/gitmoji-composer/ }).click();
+	const strip = page.getByRole('group', { name: 'Branches shown' });
+	await expect(strip).toContainText('fix/rebase-abort');
+	await expect(strip).toContainText('feat/gitmoji-composer');
+	// dimmed, not gone
+	await expect(rows).toHaveCount(all);
+
+	await strip.getByRole('button', { name: 'Hide the rest' }).click();
+	await expect(rows).toHaveCount(2);
+
+	await strip.getByRole('button', { name: 'Show all' }).click();
+	await expect(strip).toHaveCount(0);
+	await expect(rows).toHaveCount(all);
+});

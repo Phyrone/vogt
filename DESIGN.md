@@ -114,7 +114,7 @@ Flat. Panes are divided by rules, selection by a tint of the row's line colour. 
 - **Line badge** (`LineBadge.svelte`): the letter of a line on its colour. It appears wherever a branch is named.
 - **Commit graph** (`CommitGraph.svelte`): draws a `GraphLayout`; it knows nothing about git. Layout rules live in `layoutGraph`: the trunk keeps lane 0, every other line takes the innermost free lane, and the outer line is the one that bends.
 - **History** (`History.svelte`): the commit table. Rows are buttons; arrow keys and j/k move the selection.
-- **Branch sidebar** (`RefSidebar.svelte`): choosing a branch dims every other line and its rows. This is the signature interaction.
+- **Branch sidebar** (`RefSidebar.svelte`): the key to the map is also its mask. Branches are toggles, not destinations: picking one or more leaves their lines lit and dims the rest, in the graph, in the rows and in the key itself. A strip above the history names what is picked, switches between dimming and hiding the rest, and clears the mask. This is the signature interaction.
 - **Commit composer** (`CommitComposer.svelte`): staging, type and scope chips, subject with a 50-character counter, and the assembled gitmoji + Conventional Commits header.
 - Buttons, inputs, selects, checkboxes, badges and menus are stock daisyUI components.
 - Icons are Lucide (`@lucide/svelte`), imported one by one from `@lucide/svelte/icons/<name>` at 16px with the default stroke. Toolbar actions keep a text label where there is room and fall back to the icon with a tooltip; an icon never replaces a line badge.

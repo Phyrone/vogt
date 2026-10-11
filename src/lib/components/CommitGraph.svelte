@@ -8,11 +8,11 @@
 		rows: [number, number];
 		lines: Record<string, Line>;
 		head: string;
-		/** When set, every other line is dimmed. */
-		focusLine: string | null;
+		/** Ids of the lines picked in the sidebar; while there are any, every other line is dimmed. */
+		picked: string[];
 	}
 
-	let { layout, rows, lines, head, focusLine }: Props = $props();
+	let { layout, rows, lines, head, picked }: Props = $props();
 
 	const shown = $derived(sliceGraph(layout, rows[0], rows[1]));
 
@@ -21,7 +21,7 @@
 	const color = (line: string) => `var(--color-${lines[line].color})`;
 	const path = (points: [number, number][]) =>
 		points.map(([lane, row], i) => `${i ? 'L' : 'M'}${x(lane)} ${y(row)}`).join('');
-	const opacity = (line: string) => (focusLine !== null && focusLine !== line ? 0.25 : 1);
+	const opacity = (line: string) => (picked.length && !picked.includes(line) ? 0.25 : 1);
 </script>
 
 <svg

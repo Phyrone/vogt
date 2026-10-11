@@ -2,6 +2,7 @@
 	import Keyboard from '@lucide/svelte/icons/keyboard';
 	import Settings from '@lucide/svelte/icons/settings';
 	import Archive from '@lucide/svelte/icons/archive';
+	import Eye from '@lucide/svelte/icons/eye';
 	import Tag from '@lucide/svelte/icons/tag';
 	import { lineStyle, type Line } from '#lib/repo/types.ts';
 
@@ -11,12 +12,17 @@
 		ahead: number;
 		stashes: string[];
 		tags: string[];
-		focusLine: string | null;
+		/** Ids of the lines the history is masked to; none means every line shows. */
+		picked: string[];
 	}
 
-	let { lines, headLine, ahead, stashes, tags, focusLine = $bindable() }: Props = $props();
+	let { lines, headLine, ahead, stashes, tags, picked = $bindable() }: Props = $props();
 
 	const local = $derived(lines.filter((l) => !l.merged));
+
+	function toggle(id: string) {
+		picked = picked.includes(id) ? picked.filter((other) => other !== id) : [...picked, id];
+	}
 </script>
 
 <nav
@@ -24,21 +30,36 @@
 	aria-label="Branches, stashes, tags and settings"
 >
 	<div class="min-h-0 flex-1 overflow-y-auto pb-4">
+		<h2
+			class="hidden items-baseline justify-between px-4 pt-4 pb-1.5 caps text-base-content/60 lg:flex"
+		>
+			<span>Branches</span><span class="font-mono text-[11px] font-normal tracking-normal"
+				>{picked.length ? `${picked.length} of ${local.length}` : local.length}</span
+			>
+		</h2>
+		<!-- the key to the map doubles as its mask: picking branches leaves only their lines lit -->
 		<ol
-			class="relative flex flex-col gap-0.5 px-2 pt-4 before:absolute before:top-7 before:bottom-5 before:left-[25px] before:w-1.5 before:rounded-full before:bg-base-300 lg:px-3 lg:before:left-[29px]"
+			class="relative flex flex-col gap-0.5 px-2 pt-4 before:absolute before:top-7 before:bottom-5 before:left-[25px] before:w-1.5 before:rounded-full before:bg-base-300 lg:px-3 lg:pt-1 lg:before:top-4 lg:before:left-[29px]"
+			aria-label="Show only these branches"
 		>
 			{#each local as line (line.id)}
+				{@const on = picked.includes(line.id)}
 				<li>
 					<button
 						type="button"
 						class={[
-							'relative flex w-full cursor-pointer items-center gap-3 rounded-field px-1 py-1.5 text-left',
-							focusLine === line.id ? 'bg-(--line)/15' : 'hover:bg-base-content/5'
+							'relative flex w-full cursor-pointer items-center gap-3 rounded-field px-1 py-1.5 text-left motion-safe:transition-opacity',
+							on ? 'bg-(--line)/15' : 'hover:bg-base-content/5',
+							picked.length > 0 && !on && 'opacity-50 hover:opacity-100 focus-visible:opacity-100'
 						]}
 						style={lineStyle(line)}
-						aria-pressed={focusLine === line.id}
-						title="Highlight {line.name} in the graph"
-						onclick={() => (focusLine = focusLine === line.id ? null : line.id)}
+						aria-pressed={on}
+						title={on
+							? `Stop showing only ${line.name}`
+							: picked.length
+								? `Also show ${line.name}`
+								: `Show only ${line.name}`}
+						onclick={() => toggle(line.id)}
 					>
 						<span
 							class={[
@@ -58,6 +79,7 @@
 										: ''}{:else if line.remote}on origin{:else}local only{/if}</span
 							>
 						</span>
+						{#if on}<Eye class="mr-1 hidden size-4 shrink-0 lg:block" aria-hidden="true" />{/if}
 						<span class="sr-only lg:hidden">{line.name}</span>
 					</button>
 				</li>
