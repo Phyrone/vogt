@@ -1,14 +1,17 @@
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { appCacheDir, appDataDir } from '@tauri-apps/api/path';
+import { appCacheDir, appConfigDir } from '@tauri-apps/api/path';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
 
 /** Whether the page runs in the desktop app, where the actions here reach the system. */
 export const desktop = isTauri();
 
-/** Where VOGT keeps the registry and the files around it; null in a plain browser. */
+/**
+ * Where VOGT keeps the registry and the files around it; null in a plain browser.
+ * tauri-plugin-sql puts `vogt.db` in the app config directory.
+ */
 export async function appDataPath(): Promise<string | null> {
-	return desktop ? appDataDir() : null;
+	return desktop ? appConfigDir() : null;
 }
 
 /** Where the repository cache files live; null in a plain browser. */
@@ -16,9 +19,9 @@ export async function appCachePath(): Promise<string | null> {
 	return desktop ? appCacheDir() : null;
 }
 
-/** Show the app's data folder in the system file manager. */
+/** Show the folder that holds the registry in the system file manager. */
 export async function openDataDir(): Promise<void> {
-	await openPath(await appDataDir());
+	await openPath(await appConfigDir());
 }
 
 /** Show the repository cache folder in the system file manager. */
