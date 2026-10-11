@@ -1,6 +1,19 @@
 import { defineConfig } from '@playwright/test';
 
+const ci = Boolean(process.env.CI);
+
 export default defineConfig({
-	webServer: { command: 'npm run build && npm run preview', port: 4173 },
-	testMatch: '**/*.e2e.{ts,js}'
+	// `pnpm build` is the Tauri build; the tests only need the frontend
+	webServer: { command: 'pnpm vite:build && pnpm preview', port: 4173, reuseExistingServer: !ci },
+	testMatch: '**/*.e2e.{ts,js}',
+	forbidOnly: ci,
+	outputDir: 'test-results/playwright',
+	// 'github' annotates the run, JUnit and HTML are kept as artifacts
+	reporter: ci
+		? [
+				['github'],
+				['junit', { outputFile: 'test-results/playwright-junit.xml' }],
+				['html', { open: 'never' }]
+			]
+		: 'list'
 });

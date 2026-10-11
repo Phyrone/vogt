@@ -11,9 +11,11 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { sveltekit } from '@sveltejs/kit/vite';
 import process from 'node:process';
 const host = process.env.TAURI_DEV_HOST;
+// GitHub Actions sets CI; the extra reporters only make sense there
+const ci = Boolean(process.env.CI);
 
 // https://vite.dev/config/
-export default defineConfig(() => ({
+export default defineConfig({
 	plugins: [
 		sveltekit({
 			preprocess: vitePreprocess(),
@@ -44,9 +46,22 @@ export default defineConfig(() => ({
 	},
 	test: {
 		expect: { requireAssertions: true },
+		// JUnit is what GitHub Actions test-report actions read; annotations come from 'github-actions'
+		reporters: ci ? ['default', 'github-actions', 'junit'] : ['default'],
+		outputFile: { junit: 'test-results/junit.xml' },
+		coverage: {
+			enabled: true,
+			provider: 'v8',
+			include: ['src/**/*.{js,ts,svelte}'],
+			exclude: ['src/**/*.{test,spec,e2e}.{js,ts}', 'src/**/*.d.ts'],
+			// lcov, json and json-summary are the formats coverage services and PR-comment actions consume
+			reporter: ['text', 'html', 'lcov', 'json', 'json-summary'],
+			reportsDirectory: 'coverage',
+			reportOnFailure: true
+		},
 		projects: [
 			{
-				extends: './vite.config.js',
+				extends: true,
 				test: {
 					name: 'client',
 					browser: {
@@ -60,7 +75,7 @@ export default defineConfig(() => ({
 			},
 
 			{
-				extends: './vite.config.js',
+				extends: true,
 				test: {
 					name: 'server',
 					environment: 'node',
@@ -70,4 +85,4 @@ export default defineConfig(() => ({
 			}
 		]
 	}
-}));
+});
