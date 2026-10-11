@@ -1,5 +1,6 @@
 import { expect, test, vi } from 'vitest';
-import { locate, loadRepoDatabase, window, type RepoView } from './repo.ts';
+import type { ViewInfo } from '#lib/bindings/ViewInfo.ts';
+import { locate, loadRepoDatabase, window } from './repo.ts';
 
 // the repositories' cache files, backed by in-memory SQLite with the real migrations
 const opened = new Map<string, InstanceType<(typeof import('node:sqlite'))['DatabaseSync']>>();
@@ -46,7 +47,7 @@ test('a window and a locate read the cache the Rust side writes', async () => {
 		INSERT INTO views (id, only_lines, total, lanes, version) VALUES ('all', '[]', 3, 2, 7);
 	`);
 
-	const view: RepoView = { id: 'all', only: [], total: 3, lanes: 2, version: 7 };
+	const view: ViewInfo = { id: 'all', only: [], total: 3, lanes: 2, version: 7 };
 	const { rows, edges } = await window(repo, view, 0, 10);
 
 	expect(rows.map((row) => [row.row, row.hash, row.lane, row.line])).toEqual([
