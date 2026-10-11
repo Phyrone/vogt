@@ -276,8 +276,10 @@ pub async fn walk(
     let mut last_emit = Instant::now() - Duration::from_secs(1);
     let mut laid = progress.laid;
 
-    // the tips themselves, then everything the work list still holds
-    let tips: Vec<Oid> = refs.tips();
+    // the tips themselves, then everything the work list still holds; remote
+    // tips are walked too, so a fetched commit marks what it reaches pushed
+    let mut tips: Vec<Oid> = refs.tips();
+    tips.extend(refs.remote_tips.iter().copied());
     let hashes: Vec<String> = tips.iter().map(Oid::to_string).collect();
     let known = cache::known(pool, &hashes)
         .await
@@ -902,6 +904,45 @@ mod tests {
             .unwrap();
             assert_eq!(reports.load(Ordering::SeqCst), 0);
 
+            std::fs::remove_dir_all(dir).unwrap();
+        });
+    }
+
+    #[test]
+    fn a_fetched_remote_tip_marks_its_commits_pushed_without_drawing_them() {
+        tauri::async_runtime::block_on(async {
+            let (dir, repo, _refs) = repository("remote", 1);
+            let a = repo.head().unwrap().target().unwrap();
+            // the remote fetched a child of A that main does not have yet
+            let b = detached_commit(&repo, "on the remote", &[a]);
+            repo.reference("refs/remotes/origin/main", b, true, "fetch")
+                .unwrap();
+
+            let refs = history::refs(&dir).unwrap();
+            assert_eq!(refs.remote_tips, [b]);
+            let pool = pool().await;
+            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+                .await
+                .unwrap();
+
+            let a_hash = a.to_string();
+            let pushed: i64 = sqlx::query_scalar!(
+                "SELECT pushed FROM node WHERE view_id = 'all' AND hash = ?",
+                a_hash
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(pushed, 1);
+            let b_hash = b.to_string();
+            let remote_only: i64 = sqlx::query_scalar!(
+                "SELECT COUNT(*) FROM node WHERE view_id = 'all' AND hash = ?",
+                b_hash
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(remote_only, 0);
             std::fs::remove_dir_all(dir).unwrap();
         });
     }

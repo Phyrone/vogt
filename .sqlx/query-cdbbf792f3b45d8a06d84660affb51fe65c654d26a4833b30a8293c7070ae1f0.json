@@ -1,0 +1,18 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT COUNT(*) FROM node WHERE view_id = 'all' AND hash = ?",
+	"describe": {
+		"columns": [
+			{
+				"name": "COUNT(*)",
+				"ordinal": 0,
+				"type_info": "Integer"
+			}
+		],
+		"parameters": {
+			"Right": 1
+		},
+		"nullable": [false]
+	},
+	"hash": "cdbbf792f3b45d8a06d84660affb51fe65c654d26a4833b30a8293c7070ae1f0"
+}
