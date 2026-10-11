@@ -35,3 +35,17 @@ cd src-tauri && cargo check     # Rust; there is no Cargo workspace at the root
 - **Version** is declared three times — `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`. Change all three together.
 - **Commits:** every commit follows [docs/commit-conventions.md](docs/commit-conventions.md) — a gitmoji + Conventional Commits header and the why in the body. The `committing` skill must be used before running `git commit`.
 - **Skills** live in `.agents/skills/`; the per-agent directories (`.claude/skills/`, `.hermes/skills/`) hold symlinks into it. The `skills` CLI (`pnpm skills`) manages the ones in `skills-lock.json`; `committing` is local to this repository and edited by hand.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on `Phyrone/vogt` (the `origin` remote), driven with the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default triage labels, unrenamed. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one root `GLOSSARY.md` and `docs/adr/`. See `docs/agents/domain.md`.
