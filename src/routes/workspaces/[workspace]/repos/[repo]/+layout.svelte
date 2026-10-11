@@ -7,9 +7,16 @@
 
 	// the backend says when the repository changed; the history re-reads itself
 	$effect(() => {
+		let cancelled = false;
 		let stop: (() => void) | undefined;
-		void session.listen().then((off) => (stop = off));
-		return () => stop?.();
+		void session.listen().then((off) => {
+			if (cancelled) off();
+			else stop = off;
+		});
+		return () => {
+			cancelled = true;
+			stop?.();
+		};
 	});
 </script>
 
