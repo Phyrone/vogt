@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { createVirtualizer } from '@tanstack/svelte-virtual';
+	import { untrack } from 'svelte';
 	import { graphWidth, layoutGraph, PITCH } from '#lib/graph/layout.ts';
 	import { lineStyle, type Commit, type Line } from '#lib/repo/types.ts';
 	import CommitGraph from './CommitGraph.svelte';
@@ -26,8 +28,24 @@
 		if (!next) return;
 		event.preventDefault();
 		selected = next.hash;
+		// the neighbour of a rendered row is within the overscan, so it is in the document already
+		$virtualizer.scrollToIndex(rows.indexOf(next));
 		event.currentTarget.querySelector<HTMLElement>(`[data-hash="${next.hash}"]`)?.focus();
 	}
+
+	// only the rows in view are in the document, so a history can be any length
+	let scroller: HTMLDivElement;
+	const virtualizer = createVirtualizer<HTMLDivElement, HTMLLIElement>({
+		count: 0,
+		getScrollElement: () => scroller,
+		estimateSize: () => PITCH,
+		overscan: 12
+	});
+	$effect(() => {
+		const count = rows.length;
+		untrack(() => $virtualizer.setOptions({ count }));
+	});
+	const items = $derived($virtualizer.getVirtualItems());
 </script>
 
 <section class="@container flex min-w-0 flex-1 flex-col" aria-label="History">
@@ -40,55 +58,69 @@
 		<span class="hidden w-16 shrink-0 @2xl:block">Hash</span>
 		<span class="hidden w-20 shrink-0 text-right @lg:block">When</span>
 	</div>
-	<div class="min-h-0 flex-1 overflow-y-auto">
-		<div class="relative">
-			<CommitGraph {layout} {lines} {head} {focusLine} />
+	<div class="min-h-0 flex-1 overflow-y-auto" bind:this={scroller}>
+		<div class="relative" style:height="{rows.length * PITCH}px">
+			<CommitGraph
+				{layout}
+				rows={[items[0]?.index ?? 0, items.at(-1)?.index ?? -1]}
+				{lines}
+				{head}
+				{focusLine}
+			/>
 			<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 			<ol {onkeydown}>
-				{#each rows as commit (commit.hash)}
-					{@const line = lines[commit.line]}
-					<li>
-						<button
-							type="button"
-							class={[
-								'flex w-full cursor-pointer items-center gap-3 pr-4 text-left -outline-offset-2 motion-safe:transition-opacity',
-								selected === commit.hash
-									? 'bg-(--line)/12 font-semibold'
-									: 'hover:bg-base-content/5',
-								focusLine !== null && focusLine !== commit.line && 'opacity-45'
-							]}
-							style="{lineStyle(line)}; height: {PITCH}px"
-							data-hash={commit.hash}
-							aria-pressed={selected === commit.hash}
-							onclick={() => (selected = commit.hash)}
+				{#each items as item (item.index)}
+					{@const commit = rows[item.index]}
+					{#if commit}
+						{@const line = lines[commit.line]}
+						<li
+							class="absolute top-0 left-0 w-full"
+							style:transform="translateY({item.start}px)"
+							aria-setsize={rows.length}
+							aria-posinset={item.index + 1}
 						>
-							<span class="shrink-0" style:width="{graph}px"></span>
-							<span class="flex min-w-0 flex-1 items-center gap-2">
-								{#if commit.hash === head}
-									<span class="badge shrink-0 signage badge-sm tracking-wider badge-neutral"
-										>HERE</span
-									>
-								{/if}
-								{#each commit.refs ?? [] as ref (ref.label)}
-									<span class="badge shrink-0 badge-outline signage badge-sm">{ref.label}</span>
-								{/each}
-								<span class="truncate">{commit.subject}</span>
-								<span class="sr-only">on {line.name}</span>
-							</span>
-							<span
-								class="hidden w-20 shrink-0 truncate font-normal text-base-content/70 @2xl:block"
-								>{commit.author}</span
+							<button
+								type="button"
+								class={[
+									'flex w-full cursor-pointer items-center gap-3 pr-4 text-left -outline-offset-2 motion-safe:transition-opacity',
+									selected === commit.hash
+										? 'bg-(--line)/12 font-semibold'
+										: 'hover:bg-base-content/5',
+									focusLine !== null && focusLine !== commit.line && 'opacity-45'
+								]}
+								style="{lineStyle(line)}; height: {PITCH}px"
+								data-hash={commit.hash}
+								aria-pressed={selected === commit.hash}
+								onclick={() => (selected = commit.hash)}
 							>
-							<span
-								class="hidden w-16 shrink-0 font-mono text-xs font-normal text-base-content/70 @2xl:block"
-								>{commit.pending ? '' : commit.hash.slice(0, 7)}</span
-							>
-							<span
-								class="hidden w-20 shrink-0 text-right font-normal text-base-content/70 @lg:block"
-								>{commit.when}</span
-							>
-						</button>
-					</li>
+								<span class="shrink-0" style:width="{graph}px"></span>
+								<span class="flex min-w-0 flex-1 items-center gap-2">
+									{#if commit.hash === head}
+										<span class="badge shrink-0 signage badge-sm tracking-wider badge-neutral"
+											>HERE</span
+										>
+									{/if}
+									{#each commit.refs ?? [] as ref (ref.label)}
+										<span class="badge shrink-0 badge-outline signage badge-sm">{ref.label}</span>
+									{/each}
+									<span class="truncate">{commit.subject}</span>
+									<span class="sr-only">on {line.name}</span>
+								</span>
+								<span
+									class="hidden w-20 shrink-0 truncate font-normal text-base-content/70 @2xl:block"
+									>{commit.author}</span
+								>
+								<span
+									class="hidden w-16 shrink-0 font-mono text-xs font-normal text-base-content/70 @2xl:block"
+									>{commit.pending ? '' : commit.hash.slice(0, 7)}</span
+								>
+								<span
+									class="hidden w-20 shrink-0 text-right font-normal text-base-content/70 @lg:block"
+									>{commit.when}</span
+								>
+							</button>
+						</li>
+					{/if}
 				{/each}
 			</ol>
 		</div>

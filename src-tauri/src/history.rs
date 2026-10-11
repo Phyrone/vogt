@@ -14,10 +14,10 @@ use std::{
 use git2::{BranchType, Oid, Patch, Repository, Sort};
 use serde::Serialize;
 
-// shortcut: only the newest commits are read, raise it together with virtualising the history list
-const LIMIT: usize = 500;
+// shortcut: the whole list is read and laid out in one go, so it is capped; page it to go further
+const LIMIT: usize = 20_000;
 // shortcut: older remote commits than this count as not pushed, replace with merge-base checks per line
-const PUSHED_LIMIT: usize = 20_000;
+const PUSHED_LIMIT: usize = 100_000;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

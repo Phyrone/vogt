@@ -122,3 +122,17 @@ export function layoutGraph(commits: Commit[], trunk: string): GraphLayout {
 
 	return { lanes: Math.max(1, taken.length), nodes, edges };
 }
+
+/** The part of a layout that shows between the rows `first` and `last`, both included. */
+export function sliceGraph(
+	layout: GraphLayout,
+	first: number,
+	last: number
+): Pick<GraphLayout, 'nodes' | 'edges'> {
+	return {
+		// a node's index is its row
+		nodes: layout.nodes.slice(first, last + 1),
+		// an edge runs downwards from its first point to its last
+		edges: layout.edges.filter(({ points }) => points[0]![1] <= last && points.at(-1)![1] >= first)
+	};
+}
