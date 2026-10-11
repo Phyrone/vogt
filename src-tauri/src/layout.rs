@@ -99,7 +99,11 @@ pub fn layout(stations: &[Station], lines: usize, trunk: usize) -> Layout {
             let points = if a == b {
                 vec![[a, row], [b, parent]]
             } else if a > b {
-                vec![[a, row], [a, row.max(parent - (a - b))], [b, parent]]
+                vec![
+                    [a, row],
+                    [a, row.max(parent.saturating_sub(a - b))],
+                    [b, parent],
+                ]
             } else {
                 vec![[a, row], [b, parent.min(row + (b - a))], [b, parent]]
             };
@@ -186,6 +190,29 @@ mod tests {
         let layout = layout(&rows, 4, MAIN);
         assert_eq!(layout.lane, [1, 2, 0, 0, 1, 0]);
         assert_eq!(layout.lanes, 3);
+    }
+
+    #[test]
+    fn a_crossing_edge_stops_at_the_parent_row_when_the_lane_distance_is_larger() {
+        // A line crossing several lanes can travel further down than its
+        // parent's row; the corner must sit at the parent, not underflow.
+        let rows = [
+            station(1, &[7, 5]),
+            station(3, &[7]),
+            station(4, &[3]),
+            station(0, &[4]),
+            station(0, &[6]),
+            station(2, &[7]),
+            station(0, &[7]),
+            station(0, &[]),
+        ];
+        let layout = layout(&rows, 5, MAIN);
+        let edge = layout
+            .edges
+            .iter()
+            .find(|e| e.from == 2 && e.to == 3)
+            .unwrap();
+        assert_eq!(edge.points, [[4, 2], [4, 2], [0, 3]]);
     }
 
     #[test]
