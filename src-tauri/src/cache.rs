@@ -636,12 +636,16 @@ mod tests {
         tauri::async_runtime::block_on(async {
             let pool = pool().await;
             let child = fact(2, 20, &[1]);
-            enqueue(&pool, &[child.clone()]).await.unwrap();
+            enqueue(&pool, std::slice::from_ref(&child)).await.unwrap();
 
             let parent = fact(1, 10, &[]);
-            expand(&pool, &[child.hash.clone()], &[parent.clone()])
-                .await
-                .unwrap();
+            expand(
+                &pool,
+                std::slice::from_ref(&child.hash),
+                std::slice::from_ref(&parent),
+            )
+            .await
+            .unwrap();
 
             // the popped commit is done; its parent is now the work list
             assert_eq!(

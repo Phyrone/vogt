@@ -409,15 +409,16 @@ pub async fn materialize(
         (None, Some(head)) => {
             let line = lines.len() as u32;
             claim(&mut line_of, &reachable, &nodes, &index, head, line);
-            if let Some(line) = index.get(&head).map(|i| line_of[*i as usize]) {
-                if line != u32::MAX && (line as usize) >= lines.len() {
-                    lines.push(Line {
-                        id: "HEAD".into(),
-                        name: "detached HEAD".into(),
-                        remote: false,
-                        merged: false,
-                    });
-                }
+            if let Some(line) = index.get(&head).map(|i| line_of[*i as usize])
+                && line != u32::MAX
+                && (line as usize) >= lines.len()
+            {
+                lines.push(Line {
+                    id: "HEAD".into(),
+                    name: "detached HEAD".into(),
+                    remote: false,
+                    merged: false,
+                });
             }
         }
         (None, None) => {}
@@ -925,10 +926,10 @@ pub async fn materialize_view(
         "mask:{}",
         serde_json::to_string(&only).map_err(|e| e.to_string())?
     );
-    if let Some(view) = cache::view(pool, &id).await.map_err(|e| e.to_string())? {
-        if view.version == version {
-            return Ok(view);
-        }
+    if let Some(view) = cache::view(pool, &id).await.map_err(|e| e.to_string())?
+        && view.version == version
+    {
+        return Ok(view);
     }
     materialize_mask(pool, &only, version).await
 }
