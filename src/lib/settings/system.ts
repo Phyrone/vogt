@@ -2,6 +2,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { appCacheDir, appConfigDir } from '@tauri-apps/api/path';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
+import type { Channel } from '#lib/bindings/Channel.ts';
 
 /** Whether the page runs in the desktop app, where the actions here reach the system. */
 export const desktop = isTauri();
@@ -35,11 +36,15 @@ export async function rebuildCaches(): Promise<void> {
 	await invoke('rebuild_caches');
 }
 
-/** Checks the release feed for a newer version. Not implemented yet. */
-export async function checkForUpdates(): Promise<void> {
+/** The version `channel` offers above the running one, or null when there is none. */
+export async function checkForUpdates(channel: Channel): Promise<string | null> {
 	if (!desktop) throw 'Update checks need the desktop app';
-	// stub: the updater plugin is installed, but no update source is configured yet
-	throw 'No update source is configured yet';
+	return invoke<string | null>('check_update', { channel });
+}
+
+/** Downloads and installs what `channel` offers, then restarts into it. */
+export async function installUpdate(channel: Channel): Promise<void> {
+	await invoke('install_update', { channel });
 }
 
 /** The version of the running app; the bundle's version in the desktop app. */

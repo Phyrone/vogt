@@ -6,6 +6,7 @@ mod git;
 mod history;
 mod index;
 mod layout;
+mod update;
 
 /// The database's name for tauri-plugin-sql; `src/lib/db/index.ts` loads the same one.
 const DATABASE: &str = "sqlite:vogt.db";
@@ -33,7 +34,9 @@ pub fn run() {
             history::commit_files,
             index::sync_repositories,
             index::forget_repo,
-            index::rebuild_caches
+            index::rebuild_caches,
+            update::check_update,
+            update::install_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
