@@ -1,0 +1,33 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "ignorePresets": [
+    ":semanticPrefixFixDepsChoreOthers"
+  ],
+  "rebaseWhen": "behind-base-branch",
+  "semanticCommits": "enabled",
+  "semanticCommitType": "⬆️ build",
+  "semanticCommitScope": "deps",
+  "automerge": true,
+  "packageRules": [
+    {
+      "description": "A rollback is a downgrade, not an upgrade",
+      "matchUpdateTypes": [
+        "rollback"
+      ],
+      "semanticCommitType": "⬇️ build"
+    },
+    {
+      "description": "Neither an upgrade nor a downgrade: the default emoji of the build type",
+      "matchUpdateTypes": [
+        "pin",
+        "pinDigest",
+        "replacement",
+        "lockFileMaintenance"
+      ],
+      "semanticCommitType": "📦️ build"
+    }
+  ]
+}
