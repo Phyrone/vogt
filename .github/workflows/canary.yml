@@ -1,0 +1,121 @@
+name: Canary
+
+# Builds main as the canary app once its CI run has passed. The build lives
+# in one prerelease tagged `canary` that every run replaces; it is what main
+# looks like, not a version anyone released.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+# a build that runs is left to finish; of the ones waiting only the newest is kept
+concurrency:
+  group: canary
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare
+    # only main itself: a pull request from a fork can come from a branch called main too
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref_name == github.event.repository.default_branch) ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.version.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
+      release_id: ${{ steps.draft.outputs.id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # the commit CI passed on, which main may have moved past by now
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # the version counts the commits
+          fetch-depth: 0
+
+      # The updater only installs a higher version, so every build needs one
+      # above the build before it: the declared major and minor, then the
+      # number of commits. Canary is an app of its own, so its versions only
+      # have to be in order among themselves.
+      - name: Give the build a version
+        id: version
+        run: |
+          IFS=. read -r major minor _ <<< "$(jq -r .version package.json)"
+          echo "version=$major.$minor.$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # A draft, so the canary in use stays up until this one is complete.
+      - name: Create the draft
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.version.outputs.sha }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # the drafts of runs that failed
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq '.[] | select(.draft and .tag_name == "canary") | .id' |
+            while read -r stale; do
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$stale"
+            done
+          id="$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name=canary -f target_commitish="$SHA" -f name="VOGT Canary $VERSION" \
+            -f body="Built from main at $SHA and replaced by the next build. The tagged releases are the ones that stay." \
+            -F draft=true -F prerelease=true --jq .id)"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  bundle:
+    name: Bundle
+    needs: prepare
+    permissions:
+      contents: write
+    uses: ./.github/workflows/bundle.yml
+    secrets: inherit
+    with:
+      release_id: ${{ needs.prepare.outputs.release_id }}
+      tag: canary
+      channel: canary
+      ref: ${{ needs.prepare.outputs.sha }}
+      version: ${{ needs.prepare.outputs.version }}
+
+  # Runs only when every platform was built, so a failed build leaves the
+  # channel on the canary before it.
+  publish:
+    name: Publish
+    needs: [prepare, bundle]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Replace the canary before this one
+        env:
+          ID: ${{ needs.prepare.outputs.release_id }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          gh api "repos/$GH_REPO/releases" --paginate \
+            --jq ".[] | select(.tag_name == \"canary\" and .id != $ID) | .id" |
+            while read -r old; do
+              gh api -X DELETE "repos/$GH_REPO/releases/$old"
+            done
+          # the tag still points at the commit of that build; there is none before the first
+          gh api -X DELETE "repos/$GH_REPO/git/refs/tags/canary" --silent || true
+          gh api -X PATCH "repos/$GH_REPO/releases/$ID" --silent \
+            -f tag_name=canary -f target_commitish="$SHA" \
+            -F draft=false -F prerelease=true -f make_latest=false
+
+      # a release published with the workflow's own token starts no other workflow
+      - name: Move the canary channel
+        env:
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: gh workflow run pages.yml --ref "$BRANCH"
