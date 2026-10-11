@@ -1,22 +1,22 @@
 {
-  "mcpServers": {
-    "svelte": {
-      "type": "stdio",
-      "command": "pnpm",
-      "env": {},
-      "args": ["dlx", "@sveltejs/mcp"]
-    },
-    "playwright": {
-      "type": "stdio",
-      "command": "pnpm",
-      "env": {},
-      "args": ["dlx", "@playwright/mcp@latest"]
-    },
-    "xcode": {
-      "type": "stdio",
-      "command": "xcrun",
-      "env": {},
-      "args": ["mcpbridge"]
-    }
-  }
+	"mcpServers": {
+		"svelte": {
+			"type": "stdio",
+			"command": "pnpm",
+			"env": {},
+			"args": ["dlx", "@sveltejs/mcp"]
+		},
+		"playwright": {
+			"type": "stdio",
+			"command": "pnpm",
+			"env": {},
+			"args": ["dlx", "@playwright/mcp@latest"]
+		},
+		"xcode": {
+			"type": "stdio",
+			"command": "xcrun",
+			"env": {},
+			"args": ["mcpbridge"]
+		}
+	}
 }

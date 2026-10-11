@@ -32,19 +32,19 @@ One commit carries one change. If the description needs the word "and", it is pr
 
 ## Types and emoji
 
-| Type    | Emoji | Use for                                     | Allowed variants                                                                                              |
-| ------- | ----- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `feat`  | ✨    | a new capability                            | —                                                                                                             |
-| `fix`   | 🐛    | a defect fixed                              | 🚑️ production hotfix, 🔒️ security                                                                             |
-| `docs`  | 📝    | documentation                               | 💡 source comments                                                                                            |
-| `style` | 💄    | formatting only, no behaviour change        | —                                                                                                             |
-| `refactor` | ♻️ | same behaviour, different code               | 🔥 delete code or files, 🚚 move or rename, ⚰️ remove dead code                                                |
-| `perf`  | ⚡️    | same behaviour, faster                      | —                                                                                                             |
-| `test`  | ✅    | tests                                       | —                                                                                                             |
-| `build` | 📦️    | build system and dependencies               | ⬆️ upgrade a dependency, ⬇️ downgrade a dependency, ➕ add a dependency, ➖ remove a dependency                 |
-| `ci`    | 👷    | CI configuration                            | 💚 fix CI                                                                                                     |
-| `chore` | 🔧    | housekeeping that is none of the above      | 🔖 release or tag, 🙈 .gitignore, 🔨 development scripts                                                      |
-| `revert` | ⏪️   | undoing an earlier commit                   | —                                                                                                             |
+| Type       | Emoji | Use for                                | Allowed variants                                                                                |
+| ---------- | ----- | -------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `feat`     | ✨    | a new capability                       | —                                                                                               |
+| `fix`      | 🐛    | a defect fixed                         | 🚑️ production hotfix, 🔒️ security                                                               |
+| `docs`     | 📝    | documentation                          | 💡 source comments                                                                              |
+| `style`    | 💄    | formatting only, no behaviour change   | —                                                                                               |
+| `refactor` | ♻️    | same behaviour, different code         | 🔥 delete code or files, 🚚 move or rename, ⚰️ remove dead code                                 |
+| `perf`     | ⚡️    | same behaviour, faster                 | —                                                                                               |
+| `test`     | ✅    | tests                                  | —                                                                                               |
+| `build`    | 📦️    | build system and dependencies          | ⬆️ upgrade a dependency, ⬇️ downgrade a dependency, ➕ add a dependency, ➖ remove a dependency |
+| `ci`       | 👷    | CI configuration                       | 💚 fix CI                                                                                       |
+| `chore`    | 🔧    | housekeeping that is none of the above | 🔖 release or tag, 🙈 .gitignore, 🔨 development scripts                                        |
+| `revert`   | ⏪️    | undoing an earlier commit              | —                                                                                               |
 
 Use the default emoji of the type unless a variant names exactly what happened. No emoji outside this table.
 
@@ -102,14 +102,14 @@ The person is the author. Commit under the repository's configured `user.name`/`
 Co-Authored-By: <Platform> (<model-id>) <noreply@vendor>
 ```
 
-| Platform    | Co-author example                            | Email                     |
-| ----------- | -------------------------------------------- | ------------------------- |
-| OpenCode    | `OpenCode (deepseek-v4.1-flash)`             | `noreply@opencode.ai`     |
-| Claude Code | `Claude Code (claude-opus-4-5)`              | `noreply@anthropic.com`   |
-| Codex CLI   | `Codex CLI (gpt-5-codex)`                    | `noreply@openai.com`      |
-| Gemini CLI  | `Gemini CLI (gemini-2.5-pro)`                | `noreply@google.com`      |
-| Cursor      | `Cursor (claude-sonnet-4-5)`                 | `noreply@cursor.com`      |
-| any other   | `<Platform> (<model-id>)`                    | `noreply@<platform-slug>.invalid` |
+| Platform    | Co-author example                | Email                             |
+| ----------- | -------------------------------- | --------------------------------- |
+| OpenCode    | `OpenCode (deepseek-v4.1-flash)` | `noreply@opencode.ai`             |
+| Claude Code | `Claude Code (claude-opus-4-5)`  | `noreply@anthropic.com`           |
+| Codex CLI   | `Codex CLI (gpt-5-codex)`        | `noreply@openai.com`              |
+| Gemini CLI  | `Gemini CLI (gemini-2.5-pro)`    | `noreply@google.com`              |
+| Cursor      | `Cursor (claude-sonnet-4-5)`     | `noreply@cursor.com`              |
+| any other   | `<Platform> (<model-id>)`        | `noreply@<platform-slug>.invalid` |
 
 The model ID is the one the runtime itself reports — an ID such as `deepseek-v4.1-flash`, not a marketing name. Platform and model are supplied on every agent trailer; a placeholder or an omitted model is a bug. An agent that cannot establish its model stops and asks instead of guessing.
 
@@ -146,7 +146,7 @@ If an agent wrote part of that code — in an earlier session, or another agent 
 
 ### In doubt
 
-When the agent cannot tell whether it worked on the change, treat it as work it did with the person: the person is the author and the agent the co-author. That is the safe default — an agent must never commit a change it made with no trace of itself, and must never author a commit under the person's identity when no person was involved. Doubt about *someone else's* AI involvement is different: raise it with the person instead of adding a trailer.
+When the agent cannot tell whether it worked on the change, treat it as work it did with the person: the person is the author and the agent the co-author. That is the safe default — an agent must never commit a change it made with no trace of itself, and must never author a commit under the person's identity when no person was involved. Doubt about _someone else's_ AI involvement is different: raise it with the person instead of adding a trailer.
 
 One commit has one author. When the person is the author, the agent that runs the commit is the sole co-author; work a subagent contributed to is not credited separately.
 
@@ -161,15 +161,15 @@ The `committing` skill must be used before running `git commit`.
 
 ## Common mistakes
 
-| Mistake                                                            | Fix                                                                                              |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `fixed stuff`                                                      | `🐛 fix(ui): keep the context menu inside the window`                                            |
-| `✨ Update readme.`                                                 | `📝 docs: update the readme` — right type, imperative, no period                                 |
-| `✨ feat(ui): add the button and fix the crash and bump deps`       | split into three commits                                                                         |
-| `✨ feat: make the save format better`                              | add the scope: `✨ feat(save): ...`                                                               |
-| a change the agent made with a person, under the agent's identity  | the person is the author; the agent belongs in `Co-Authored-By`                                  |
-| a change the agent made with a person, no `Co-Authored-By`         | add the agent's trailer — `<Platform> (<model-id>) <noreply@vendor>`                             |
-| an unattended run committed under the person's identity            | commit as the agent: `-c user.name=... -c user.email=...`                                        |
-| an agent that only wrote the message adding its own trailer        | no trailer; the person discloses any AI-written code                                             |
-| committing code that may be AI-written without telling the person  | flag it — mechanical changes aside, the person decides the disclosure                            |
-| an agent `Co-Authored-By` without a model                          | `<Platform> (<model-id>)` — both, every trailer                                                  |
+| Mistake                                                           | Fix                                                                   |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `fixed stuff`                                                     | `🐛 fix(ui): keep the context menu inside the window`                 |
+| `✨ Update readme.`                                               | `📝 docs: update the readme` — right type, imperative, no period      |
+| `✨ feat(ui): add the button and fix the crash and bump deps`     | split into three commits                                              |
+| `✨ feat: make the save format better`                            | add the scope: `✨ feat(save): ...`                                   |
+| a change the agent made with a person, under the agent's identity | the person is the author; the agent belongs in `Co-Authored-By`       |
+| a change the agent made with a person, no `Co-Authored-By`        | add the agent's trailer — `<Platform> (<model-id>) <noreply@vendor>`  |
+| an unattended run committed under the person's identity           | commit as the agent: `-c user.name=... -c user.email=...`             |
+| an agent that only wrote the message adding its own trailer       | no trailer; the person discloses any AI-written code                  |
+| committing code that may be AI-written without telling the person | flag it — mechanical changes aside, the person decides the disclosure |
+| an agent `Co-Authored-By` without a model                         | `<Platform> (<model-id>)` — both, every trailer                       |

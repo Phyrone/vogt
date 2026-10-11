@@ -1,65 +1,65 @@
 {
-  // TEMPORARY: local copy of the V2 config schema, bundled from the running
-  // server's OpenAPI Config.Info. The published schema at
-  // https://opencode.ai/config.json is still generated from the V1 types and
-  // rejects valid V2 fields — see https://github.com/anomalyco/opencode/issues/43748.
-  // Once that is fixed, switch $schema back to the published URL above and
-  // delete .opencode/opencode.schema.json.
-  "$schema": "./opencode.schema.json",
-  "plugins": ["@sveltejs/opencode"],
-  "update": "auto",
-  "instructions": ["AGENTS.md"],
-  "compaction": {
-    "auto": true,
-    "buffer": 50000,
-  },
-  "lsp": true,
-  "formatter": true,
-  "permissions": [
-    { "action": "question", "resource": "*", "effect": "allow" },
-    { "action": "skill", "resource": "*", "effect": "allow" },
-    { "action": "webfetch", "resource": "*", "effect": "ask" },
-    { "action": "read", "resource": "*", "effect": "allow" },
-    {
-      "action": "external_directory",
-      "resource": "~/.cargo/registry/*",
-      "effect": "allow",
-    },
-  ],
-  "mcp": {
-    "servers": {
-      "ark-ui": {
-        "type": "local",
-        "command": ["pnpm", "dlx", "@ark-ui/mcp"],
-        "disabled": false,
-      },
-      "svelte": {
-        "type": "local",
-        "command": ["pnpm", "dlx", "@sveltejs/mcp"],
-        "disabled": false,
-      },
-      "playwright": {
-        "type": "local",
-        "command": ["pnpm", "dlx", "@playwright/mcp@latest"],
-        "disabled": false,
-      },
-      "chrome-devtools": {
-        "type": "local",
-        "command": [
-          "pnpm",
-          "dlx",
-          "chrome-devtools-mcp@latest",
-          "--autoConnect",
-          "--experimentalVision",
-          "--experimentalStructuredContent",
-          "--experimentalScreencast",
-        ],
-      },
-      "xcode": {
-        "type": "local",
-        "command": ["xcrun", "mcpbridge"],
-        "disabled": false
-      },
-    },
-  },
+	// TEMPORARY: local copy of the V2 config schema, bundled from the running
+	// server's OpenAPI Config.Info. The published schema at
+	// https://opencode.ai/config.json is still generated from the V1 types and
+	// rejects valid V2 fields — see https://github.com/anomalyco/opencode/issues/43748.
+	// Once that is fixed, switch $schema back to the published URL above and
+	// delete .opencode/opencode.schema.json.
+	"$schema": "./opencode.schema.json",
+	"plugins": ["@sveltejs/opencode"],
+	"update": "auto",
+	"instructions": ["AGENTS.md"],
+	"compaction": {
+		"auto": true,
+		"buffer": 50000
+	},
+	"lsp": true,
+	"formatter": true,
+	"permissions": [
+		{ "action": "question", "resource": "*", "effect": "allow" },
+		{ "action": "skill", "resource": "*", "effect": "allow" },
+		{ "action": "webfetch", "resource": "*", "effect": "ask" },
+		{ "action": "read", "resource": "*", "effect": "allow" },
+		{
+			"action": "external_directory",
+			"resource": "~/.cargo/registry/*",
+			"effect": "allow"
+		}
+	],
+	"mcp": {
+		"servers": {
+			"ark-ui": {
+				"type": "local",
+				"command": ["pnpm", "dlx", "@ark-ui/mcp"],
+				"disabled": false
+			},
+			"svelte": {
+				"type": "local",
+				"command": ["pnpm", "dlx", "@sveltejs/mcp"],
+				"disabled": false
+			},
+			"playwright": {
+				"type": "local",
+				"command": ["pnpm", "dlx", "@playwright/mcp@latest"],
+				"disabled": false
+			},
+			"chrome-devtools": {
+				"type": "local",
+				"command": [
+					"pnpm",
+					"dlx",
+					"chrome-devtools-mcp@latest",
+					"--autoConnect",
+					"--experimentalVision",
+					"--experimentalStructuredContent",
+					"--experimentalScreencast"
+				]
+			},
+			"xcode": {
+				"type": "local",
+				"command": ["xcrun", "mcpbridge"],
+				"disabled": false
+			}
+		}
+	}
 }
