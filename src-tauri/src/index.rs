@@ -138,10 +138,12 @@ fn watch(repo: &Arc<Repo>) -> Result<notify::RecommendedWatcher, String> {
     let (gitdir, commondir) = history::git_dirs(&repo.path).map_err(history::open_error)?;
     let repo = repo.clone();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        if event.is_ok() {
-            repo.dirty.store(true, Ordering::SeqCst);
-            repo.wake.notify_one();
+        let Ok(event) = event else { return };
+        if !relevant(&event.paths) {
+            return;
         }
+        repo.dirty.store(true, Ordering::SeqCst);
+        repo.wake.notify_one();
     })
     .map_err(|e| e.to_string())?;
     let mut watch = |dir: PathBuf, recursive: bool| -> Result<(), String> {
@@ -167,6 +169,21 @@ fn watch(repo: &Arc<Repo>) -> Result<notify::RecommendedWatcher, String> {
         watch(commondir, false)?;
     }
     Ok(watcher)
+}
+
+/// Whether a change to `paths` can move a ref or HEAD. An editor rewrites
+/// `.git/index` and `.git/index.lock` on every `git status`, which is not
+/// worth a sync; a ref update arrives as the rename onto its final name. An
+/// event without paths is a rescan signal and is always relevant.
+fn relevant(paths: &[PathBuf]) -> bool {
+    paths.is_empty()
+        || paths.iter().any(|path| {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default();
+            name != "index" && !name.ends_with(".lock")
+        })
 }
 
 /// The worker of one repository: waits for changes to settle, then syncs.
@@ -946,6 +963,21 @@ mod tests {
             assert_eq!(remote_only, 0);
             std::fs::remove_dir_all(dir).unwrap();
         });
+    }
+
+    #[test]
+    fn the_watcher_ignores_index_churn() {
+        let git = Path::new("/repo/.git");
+        assert!(!relevant(&[git.join("index")]));
+        assert!(!relevant(&[git.join("index.lock")]));
+        assert!(!relevant(&[git.join("index"), git.join("index.lock")]));
+        assert!(relevant(&[git.join("HEAD")]));
+        assert!(relevant(&[git.join("packed-refs")]));
+        assert!(relevant(&[git.join("refs/heads/main")]));
+        // one relevant path is enough
+        assert!(relevant(&[git.join("index"), git.join("refs/heads/main")]));
+        // an event without paths is a rescan signal, never ignorable
+        assert!(relevant(&[]));
     }
 
     #[test]
