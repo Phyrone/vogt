@@ -1,0 +1,8 @@
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 4 }
+
+# Used by GitHub Actions: `cargo nextest run --profile ci`
+[profile.ci]
+fail-fast = false
+# Written to target/nextest/ci/junit.xml
+junit = { path = "junit.xml" }

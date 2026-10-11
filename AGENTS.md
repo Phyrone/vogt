@@ -25,7 +25,7 @@ Verify a change with all four checks:
 ```bash
 pnpm check                      # svelte-check, frontend types
 pnpm lint                       # prettier --check and eslint; fix formatting with pnpm format
-pnpm test                       # unit tests with coverage, then end-to-end tests
+pnpm test                       # unit tests with coverage, Rust tests, then end-to-end tests
 cd src-tauri && cargo check     # Rust; there is no Cargo workspace at the root
 ```
 
@@ -33,6 +33,7 @@ cd src-tauri && cargo check     # Rust; there is no Cargo workspace at the root
 - Prettier and ESLint skip `src-tauri/` and the agent tooling directories; Rust is formatted with `cargo fmt`.
 - `pnpm test:unit` is Vitest in watch mode and always collects coverage; add `--run` for a single pass. `*.svelte.spec.ts` files run in headless Chromium, every other `*.spec.ts` in node.
 - `pnpm test:e2e` is Playwright over `*.e2e.ts` files; it builds and serves the frontend itself, without the Tauri shell, so `invoke` calls have no backend there.
+- `pnpm test:rust` runs the Rust tests with `cargo nextest`, not `cargo test`; CI runs them on Linux, Windows and macOS.
 - `pnpm test:unit:ui` and `pnpm test:e2e:ui` open the interactive runners.
 - With `CI` set, both runners also write JUnit files to `test-results/` and GitHub annotations; coverage lands in `coverage/`.
 
