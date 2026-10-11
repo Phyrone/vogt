@@ -17,6 +17,7 @@ bun.lockb
 /.github/agents/
 /.github/skills/
 /.hermes/
+/.impeccable/
 /skills-lock.json
 
 # Generated from the opencode server's OpenAPI description
