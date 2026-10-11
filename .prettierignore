@@ -23,3 +23,6 @@ bun.lockb
 # Generated from the opencode server's OpenAPI description
 /.opencode/opencode.schema.json
 /drizzle/
+/drizzle-repo/
+# Generated from the Rust structs by ts-rs; `cargo test` refreshes it
+/src/lib/bindings/

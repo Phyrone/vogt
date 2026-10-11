@@ -1,0 +1,18 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT COUNT(*) FROM edge WHERE view_id = ?",
+	"describe": {
+		"columns": [
+			{
+				"name": "COUNT(*)",
+				"ordinal": 0,
+				"type_info": "Integer"
+			}
+		],
+		"parameters": {
+			"Right": 1
+		},
+		"nullable": [false]
+	},
+	"hash": "6745092ed400d41b4525601ae5c1e1512059befd20d0397e0025f773ec7ebac2"
+}

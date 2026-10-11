@@ -1,0 +1,12 @@
+{
+	"db_name": "SQLite",
+	"query": "UPDATE commits SET expanded = 1 WHERE hash IN (SELECT value FROM json_each(?))",
+	"describe": {
+		"columns": [],
+		"parameters": {
+			"Right": 1
+		},
+		"nullable": []
+	},
+	"hash": "fd75a60e2c5522a2c8ca48f8613cef8d6df0b4c0608b3e322b7832ae6975068e"
+}

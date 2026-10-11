@@ -1,0 +1,12 @@
+{
+	"db_name": "SQLite",
+	"query": "DELETE FROM node WHERE view_id = ?",
+	"describe": {
+		"columns": [],
+		"parameters": {
+			"Right": 1
+		},
+		"nullable": []
+	},
+	"hash": "39eaabbf10ca5195cc10163476e77c02bc1de5ee2aad719ab734500dbff7f1e1"
+}

@@ -14,8 +14,13 @@ export const load: LayoutLoad = async ({ params, parent, url }) => {
 	const worktree = worktrees.find((w) => w.path === selected) ?? worktrees.find((w) => w.current);
 	const path = worktree?.path ?? repo.path;
 	// the command rejects with a message that says what is wrong with the folder
-	const repository = await readRepository(repo.id, path).catch((reason) =>
+	const opened = await readRepository(workspace.id, repo.id, path).catch((reason) =>
 		error(422, String(reason))
 	);
-	return { repo, worktrees, worktree, session: new RepoSession(repository, path) };
+	return {
+		repo,
+		worktrees,
+		worktree,
+		session: new RepoSession(opened, workspace.id, repo.id, path)
+	};
 };

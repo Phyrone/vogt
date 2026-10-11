@@ -4,6 +4,13 @@
 	let { data, children } = $props();
 
 	const session = $derived(data.session);
+
+	// the backend says when the repository changed; the history re-reads itself
+	$effect(() => {
+		let stop: (() => void) | undefined;
+		void session.listen().then((off) => (stop = off));
+		return () => stop?.();
+	});
 </script>
 
 <Toolbar

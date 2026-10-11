@@ -1,4 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm';
+import { invoke } from '@tauri-apps/api/core';
+import { closeRepoDatabase } from '#lib/db/repo.ts';
 import { db } from '#lib/db/index.ts';
 import { repo, workspace } from '#lib/db/schema.ts';
 import type { Repo, Workspace } from './types.ts';
@@ -39,8 +41,23 @@ export const database = {
 		return added!;
 	},
 
-	/** Takes a repository out of a workspace. Nothing on disk is touched. */
+	/** Takes a repository out of a workspace and drops the cache built for it. */
 	async removeRepo(workspaceId: string, id: string): Promise<void> {
 		await db.delete(repo).where(and(eq(repo.workspaceId, workspaceId), eq(repo.id, id)));
+		const cachePath = await invoke<string>('forget_repo', { workspace: workspaceId, repo: id });
+		await closeRepoDatabase(cachePath);
+	},
+
+	/** Tells the backend which repositories to watch and keep in sync. */
+	async syncRepositories(workspaces: Workspace[]): Promise<void> {
+		await invoke('sync_repositories', {
+			list: workspaces.flatMap((workspace) =>
+				workspace.repos.map((repo) => ({
+					id: repo.id,
+					workspace: workspace.id,
+					path: repo.path
+				}))
+			)
+		});
 	}
 };

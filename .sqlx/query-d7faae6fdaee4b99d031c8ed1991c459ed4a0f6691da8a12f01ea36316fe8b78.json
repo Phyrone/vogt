@@ -1,0 +1,23 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT hash, parents FROM commits WHERE hash IN (SELECT value FROM json_each(?))",
+	"describe": {
+		"columns": [
+			{
+				"name": "hash",
+				"ordinal": 0,
+				"type_info": "Text"
+			},
+			{
+				"name": "parents",
+				"ordinal": 1,
+				"type_info": "Text"
+			}
+		],
+		"parameters": {
+			"Right": 1
+		},
+		"nullable": [false, false]
+	},
+	"hash": "d7faae6fdaee4b99d031c8ed1991c459ed4a0f6691da8a12f01ea36316fe8b78"
+}

@@ -4,12 +4,16 @@ use std::path::{Path, PathBuf};
 
 use git2::{ErrorCode, Repository, RepositoryInitOptions};
 use serde::Serialize;
+use ts_rs::TS;
 
 /// One checkout of a repository: the main one, or one added with `git worktree add`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
 pub struct Worktree {
     /// The directory's name.
     name: String,
+    #[ts(type = "string")]
     path: PathBuf,
     /// `None` while HEAD is detached or has no commit yet.
     branch: Option<String>,

@@ -1,0 +1,18 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT COUNT(*) FROM commits",
+	"describe": {
+		"columns": [
+			{
+				"name": "COUNT(*)",
+				"ordinal": 0,
+				"type_info": "Integer"
+			}
+		],
+		"parameters": {
+			"Right": 0
+		},
+		"nullable": [false]
+	},
+	"hash": "3b760a7110c329cf4fa6ec7d595cceebf82006299f9afde216324708b0f47f07"
+}

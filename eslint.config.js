@@ -12,7 +12,16 @@ export default defineConfig(
 	includeIgnoreFile(gitignorePath),
 	{
 		// Agent tooling installed and updated by the skills CLI and sv
-		ignores: ['.agents/', '.claude/skills/', '.cursor/', '.gemini/', '.github/', '.hermes/']
+		ignores: [
+			'.agents/',
+			'.claude/skills/',
+			'.cursor/',
+			'.gemini/',
+			'.github/',
+			'.hermes/',
+			// generated from the Rust structs by ts-rs
+			'src/lib/bindings/'
+		]
 	},
 	js.configs.recommended,
 	ts.configs.recommended,

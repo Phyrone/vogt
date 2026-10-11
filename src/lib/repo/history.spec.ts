@@ -1,5 +1,7 @@
 import { expect, test } from 'vitest';
-import { ago, badges, layoutWindow, toRepository, toWindow, type GitSummary } from './history.ts';
+import type { Opened as GitSummary } from '#lib/bindings/Opened.ts';
+import type { RepoRow } from '#lib/db/repo.ts';
+import { ago, badges, layoutWindow, toHistoryEdge, toHistoryRow, toRepository } from './history.ts';
 import type { Commit } from './types.ts';
 
 test('a time is told the way the history column has room for', () => {
@@ -43,7 +45,10 @@ test('a repository read from git gets the badges and colours of its lines', () =
 			{ id: 'merged-a', name: 'feat/x', remote: false, merged: true }
 		],
 		stashes: [],
-		tags: []
+		tags: [],
+		cachePath: '/tmp/repo.db',
+		view: { id: 'all', only: [], total: 0, lanes: 1, version: 0 },
+		progress: { indexed: 0, laid: 0, complete: true }
 	};
 
 	const repository = toRepository(summary);
@@ -54,21 +59,45 @@ test('a repository read from git gets the badges and colours of its lines', () =
 	expect(repository.commits).toBeUndefined();
 });
 
-test('rows read from git get their relative times', () => {
-	const row = { row: 0, lane: 0, hash: 'b', subject: 's', author: 'Mira', line: 'main' };
-	const window = toWindow(
-		{
-			total: 9,
-			lanes: 1,
-			rows: [{ ...row, body: null, time: 940, parents: ['a'], refs: [], pushed: true }],
-			edges: []
-		},
-		1_000_000
-	);
+test('rows read from the cache get their relative times and parsed facts', () => {
+	const row: RepoRow = {
+		row: 4,
+		lane: 1,
+		hash: 'b',
+		subject: 's',
+		author: 'Mira',
+		time: 940,
+		body: null,
+		parents: '["a"]',
+		line: 'main',
+		refs: '[{"kind":"tag","label":"v1"}]',
+		pushed: 1
+	};
 
-	expect(window.rows[0]).toMatchObject({ when: '1 min', body: undefined });
-	expect(window.rows[0]).not.toHaveProperty('files');
-	expect(window.total).toBe(9);
+	const mapped = toHistoryRow(row, 1_000_000);
+
+	expect(mapped).toMatchObject({
+		when: '1 min',
+		body: undefined,
+		parents: ['a'],
+		refs: [{ kind: 'tag', label: 'v1' }],
+		pushed: true,
+		row: 4,
+		lane: 1
+	});
+});
+
+test('edges read from the cache get their points parsed', () => {
+	expect(toHistoryEdge({ from: 0, to: 3, line: 'feat', points: '[[1,0],[1,2],[0,3]]' })).toEqual({
+		from: 0,
+		to: 3,
+		line: 'feat',
+		points: [
+			[1, 0],
+			[1, 2],
+			[0, 3]
+		]
+	});
 });
 
 test('commits held in the webview are cut into the same windows', () => {

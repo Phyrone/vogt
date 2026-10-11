@@ -1,0 +1,23 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT pushed, refs FROM node WHERE view_id = ? AND hash = ?",
+	"describe": {
+		"columns": [
+			{
+				"name": "pushed",
+				"ordinal": 0,
+				"type_info": "Integer"
+			},
+			{
+				"name": "refs",
+				"ordinal": 1,
+				"type_info": "Text"
+			}
+		],
+		"parameters": {
+			"Right": 2
+		},
+		"nullable": [false, false]
+	},
+	"hash": "8fe0466f0f12af8602c319966852b0826eb6b933a3f491cb2cafb9b8e6c95779"
+}

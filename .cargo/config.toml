@@ -1,0 +1,9 @@
+[env]
+# ts-rs writes the TypeScript types of everything that crosses into the webview here;
+# `relative = true` resolves it against this file's directory, the repository root.
+TS_RS_EXPORT_DIR = { value = "src/lib/bindings", relative = true }
+# serde sends i64 as a JSON number, so the bindings must not say bigint
+TS_RS_LARGE_INT = "number"
+# sqlx's query macros check against the committed .sqlx cache; `pnpm db:repo:prepare`
+# sets this to false to check them against the real schema instead
+SQLX_OFFLINE = { value = "true", force = false }

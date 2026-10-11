@@ -1,0 +1,18 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT hash FROM commits WHERE expanded = 1",
+	"describe": {
+		"columns": [
+			{
+				"name": "hash",
+				"ordinal": 0,
+				"type_info": "Text"
+			}
+		],
+		"parameters": {
+			"Right": 0
+		},
+		"nullable": [false]
+	},
+	"hash": "27ae35ca431cb6ded852715de6c0ea43055544c164639b0ad13172ca6940e193"
+}

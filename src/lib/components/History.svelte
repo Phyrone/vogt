@@ -2,6 +2,7 @@
 	import { createVirtualizer } from '@tanstack/svelte-virtual';
 	import { untrack } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
+	import type { Progress } from '#lib/bindings/Progress.ts';
 	import { graphWidth, MAX_LANES, PITCH } from '#lib/graph/layout.ts';
 	import {
 		lineStyle,
@@ -19,8 +20,12 @@
 		/** Where the rows come from. They are asked for as they scroll into view. */
 		source: {
 			rows(from: number, to: number, only: string[]): Promise<HistoryWindow>;
+			/** The row the commit sits in, so the list can stay where it was. */
+			locate(hash: string): Promise<number | null>;
 			/** Changes when the history did, so that it is asked for again. */
 			version: number;
+			/** How far the backend's index is; rows beyond it are skeletons. */
+			progress: Progress;
 		};
 		lines: Record<string, Line>;
 		trunk: string;
@@ -42,6 +47,8 @@
 
 	/** Rows are asked for this many at a time. */
 	const CHUNK = 100;
+	/** Skeleton rows shown past the end of what the index has laid out yet. */
+	const SKELETON = 40;
 
 	/** Leave the rest out instead of dimming it. */
 	let hide = $state(false);
@@ -56,6 +63,8 @@
 	const requested = new Set<number>();
 	/** Goes up when everything is asked for again; answers to earlier questions are dropped. */
 	let epoch = $state(0);
+	/** The commit to keep in view across a refresh, once the new rows are there. */
+	let anchor: string | undefined;
 
 	function load(chunk: number) {
 		if (requested.has(chunk)) return;
@@ -67,9 +76,23 @@
 				chunks.set(chunk, window);
 				total = window.total;
 				lanes = window.lanes;
-				// with no working changes to show, start on the checked-out commit
-				if (selected === null && !window.rows[0]?.pending) {
-					selected = window.rows.find((row) => row.hash === head) ?? null;
+				if (selected) {
+					const fresh = window.rows.find((row) => row.hash === selected!.hash);
+					if (fresh) selected = fresh;
+				}
+				if (chunk === 0) {
+					// with no working changes to show, start on the checked-out commit
+					if (selected === null && !window.rows[0]?.pending) {
+						selected = window.rows.find((row) => row.hash === head) ?? null;
+					}
+					// the rows may have moved; put the reader back where they were
+					if (anchor) {
+						const hash = anchor;
+						anchor = undefined;
+						void source.locate(hash).then((row) => {
+							if (row !== null && asked === epoch) $virtualizer.scrollToIndex(row);
+						});
+					}
 				}
 			},
 			(reason) => {
@@ -83,6 +106,7 @@
 		void source.version;
 		void only.join('\n');
 		untrack(() => {
+			anchor = shown.nodes[0]?.hash;
 			epoch++;
 			requested.clear();
 			chunks.clear();
@@ -90,6 +114,9 @@
 			load(0);
 		});
 	});
+
+	/** What the list holds while the index runs: the laid-out rows plus skeletons. */
+	const count = $derived(total + (source.progress.complete ? 0 : SKELETON));
 
 	// only the rows in view are in the document, so a history can be any length
 	let scroller: HTMLDivElement;
@@ -100,8 +127,8 @@
 		overscan: 12
 	});
 	$effect(() => {
-		const count = total;
-		untrack(() => $virtualizer.setOptions({ count }));
+		const next = count;
+		untrack(() => $virtualizer.setOptions({ count: next }));
 	});
 	const items = $derived($virtualizer.getVirtualItems());
 	const first = $derived(items[0]?.index ?? 0);
@@ -167,6 +194,17 @@
 		<span class="hidden w-16 shrink-0 @2xl:block">Hash</span>
 		<span class="hidden w-20 shrink-0 text-right @lg:block">When</span>
 	</div>
+	{#if !source.progress.complete}
+		<div
+			class="flex h-8 shrink-0 items-center gap-2 border-b border-base-300 bg-base-200 pl-4"
+			role="status"
+		>
+			<span class="loading loading-xs loading-spinner" aria-hidden="true"></span>
+			<span class="text-xs text-base-content/70">
+				Reading the history — {source.progress.indexed.toLocaleString()} commits so far
+			</span>
+		</div>
+	{/if}
 	{#if picked.length}
 		<div
 			class="flex h-9 shrink-0 items-center gap-3 border-b border-base-300 bg-base-200 pr-2 pl-4"
@@ -205,18 +243,18 @@
 	{/if}
 	{#if failure}
 		<p role="alert" class="p-6 text-error">The history could not be read: {failure}</p>
-	{:else if !total && chunks.has(0)}
+	{:else if !total && chunks.has(0) && source.progress.complete}
 		<p class="p-6 text-base-content/70">
 			{only.length ? 'No commits were made on these branches themselves.' : 'No commits yet.'}
 		</p>
 	{/if}
 	<div class="min-h-0 flex-1 overflow-y-auto" bind:this={scroller}>
-		<div class="relative" style:height="{total * PITCH}px">
+		<div class="relative" style:height="{count * PITCH}px">
 			<CommitGraph
 				nodes={shown.nodes}
 				edges={shown.edges}
 				width={graph}
-				height={total * PITCH}
+				height={count * PITCH}
 				{lines}
 				{head}
 				{picked}
@@ -228,7 +266,7 @@
 					<li
 						class="absolute top-0 left-0 w-full"
 						style:transform="translateY({item.start}px)"
-						aria-setsize={total}
+						aria-setsize={count}
 						aria-posinset={item.index + 1}
 					>
 						{#if commit}
@@ -272,10 +310,10 @@
 								>
 							</button>
 						{:else}
-							<!-- the row is on its way -->
+							<!-- the row is on its way, or not indexed yet -->
 							<div class="flex items-center gap-3 pr-4" style:height="{PITCH}px" aria-hidden="true">
 								<span class="shrink-0" style:width="{graph}px"></span>
-								<span class="h-2.5 w-2/5 rounded-full bg-base-content/10"></span>
+								<span class="h-2.5 w-2/5 skeleton"></span>
 							</div>
 						{/if}
 					</li>

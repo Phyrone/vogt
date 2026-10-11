@@ -1,0 +1,18 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT COUNT(*) FROM node WHERE view_id = ? AND line = ? AND pushed = 0",
+	"describe": {
+		"columns": [
+			{
+				"name": "COUNT(*)",
+				"ordinal": 0,
+				"type_info": "Integer"
+			}
+		],
+		"parameters": {
+			"Right": 2
+		},
+		"nullable": [false]
+	},
+	"hash": "b6305dcf45ad0c01dc10637607c0fa556fc70bde1923ab179385ef7b2de0a084"
+}

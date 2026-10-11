@@ -1,5 +1,6 @@
 import Database from '@tauri-apps/plugin-sql';
 import { drizzle } from 'drizzle-orm/sqlite-proxy';
+import type { RemoteCallback } from 'drizzle-orm/sqlite-proxy';
 import * as schema from './schema.ts';
 
 let sqlite: Database | undefined;
@@ -15,9 +16,8 @@ export async function initDatabase() {
 }
 
 /** Queries run in SQLite on the Rust side, through tauri-plugin-sql. */
-export const db = drizzle(
-	async (sql, params, method) => {
-		if (!sqlite) throw new Error('The database is not open');
+export function proxy(sqlite: Database): RemoteCallback {
+	return async (sql, params, method) => {
 		if (method === 'run') {
 			await sqlite.execute(sql, params);
 			return { rows: [] };
@@ -28,6 +28,13 @@ export const db = drizzle(
 			Object.values(row)
 		);
 		return { rows: method === 'get' ? (rows[0] as unknown[]) : rows };
+	};
+}
+
+export const db = drizzle(
+	async (sql, params, method) => {
+		if (!sqlite) throw new Error('The database is not open');
+		return proxy(sqlite)(sql, params, method);
 	},
 	{ schema }
 );

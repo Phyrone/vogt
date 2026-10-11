@@ -14,7 +14,12 @@ repository = "https://github.com/Phyrone/vogt"
 git2 = { version = "0.20", default-features = false }
 vogt-macros = { path = "crates/vogt-macros" }
 # the version tauri-plugin-sql uses, to share its connection pool
-sqlx = { version = "0.8", default-features = false, features = ["sqlite"] }
+sqlx = { version = "0.8", default-features = false, features = ["sqlite", "macros"] }
+notify = "8"
+# tauri runs on tokio; the index workers need its notifications and timers
+tokio = { version = "1", features = ["sync", "time"] }
+# the types that cross into the webview are generated from the Rust structs
+ts-rs = "12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.152"
 tauri = { version = "2.12.3" }

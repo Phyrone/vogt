@@ -1,0 +1,12 @@
+{
+	"db_name": "SQLite",
+	"query": "DELETE FROM pending WHERE hash IN (SELECT value FROM json_each(?))",
+	"describe": {
+		"columns": [],
+		"parameters": {
+			"Right": 1
+		},
+		"nullable": []
+	},
+	"hash": "57b7e58e0276673db4c8904d9b93859ab21c1a8deb04cc90c7a64fa1b1516fa9"
+}

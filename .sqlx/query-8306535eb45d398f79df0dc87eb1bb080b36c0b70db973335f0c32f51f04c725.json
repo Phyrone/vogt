@@ -1,0 +1,12 @@
+{
+	"db_name": "SQLite",
+	"query": "INSERT INTO views (id, only_lines, total, lanes, version) VALUES (?, ?, ?, ?, ?)\n         ON CONFLICT (id) DO UPDATE SET\n             only_lines = excluded.only_lines,\n             total = excluded.total,\n             lanes = excluded.lanes,\n             version = excluded.version",
+	"describe": {
+		"columns": [],
+		"parameters": {
+			"Right": 5
+		},
+		"nullable": []
+	},
+	"hash": "8306535eb45d398f79df0dc87eb1bb080b36c0b70db973335f0c32f51f04c725"
+}

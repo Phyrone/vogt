@@ -1,15 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import type { Worktree } from '#lib/bindings/Worktree.ts';
 
-/** One checkout of a repository: the main one, or one added with `git worktree add`. */
-export interface Worktree {
-	/** The directory's name. */
-	name: string;
-	path: string;
-	/** null while HEAD is detached or has no commit yet. */
-	branch: string | null;
-	/** The worktree the listing was asked through. */
-	current: boolean;
-}
+export type { Worktree };
 
 /** Every worktree of the repository at `path`, the main one first; none if it is not a git repository. */
 export async function listWorktrees(path: string): Promise<Worktree[]> {

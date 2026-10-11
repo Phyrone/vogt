@@ -46,5 +46,6 @@ export const mock = {
 		const target = find(workspace);
 		target.repos = target.repos.filter((r) => r.id !== repo);
 	},
+	syncRepositories(): void {},
 	pickDirectory: (): string => `~/code/project-${created + 1}`
 };

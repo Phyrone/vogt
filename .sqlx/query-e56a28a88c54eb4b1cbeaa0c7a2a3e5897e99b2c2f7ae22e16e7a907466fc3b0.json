@@ -1,0 +1,23 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT hash, time FROM pending ORDER BY time DESC, hash",
+	"describe": {
+		"columns": [
+			{
+				"name": "hash",
+				"ordinal": 0,
+				"type_info": "Text"
+			},
+			{
+				"name": "time",
+				"ordinal": 1,
+				"type_info": "Integer"
+			}
+		],
+		"parameters": {
+			"Right": 0
+		},
+		"nullable": [false, false]
+	},
+	"hash": "e56a28a88c54eb4b1cbeaa0c7a2a3e5897e99b2c2f7ae22e16e7a907466fc3b0"
+}

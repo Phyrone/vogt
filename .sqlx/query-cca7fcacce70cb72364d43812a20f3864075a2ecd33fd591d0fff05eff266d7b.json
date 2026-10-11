@@ -1,0 +1,38 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT id, only_lines, total, lanes, version FROM views WHERE id = ?",
+	"describe": {
+		"columns": [
+			{
+				"name": "id",
+				"ordinal": 0,
+				"type_info": "Text"
+			},
+			{
+				"name": "only_lines",
+				"ordinal": 1,
+				"type_info": "Text"
+			},
+			{
+				"name": "total",
+				"ordinal": 2,
+				"type_info": "Integer"
+			},
+			{
+				"name": "lanes",
+				"ordinal": 3,
+				"type_info": "Integer"
+			},
+			{
+				"name": "version",
+				"ordinal": 4,
+				"type_info": "Integer"
+			}
+		],
+		"parameters": {
+			"Right": 1
+		},
+		"nullable": [false, false, false, false, false]
+	},
+	"hash": "cca7fcacce70cb72364d43812a20f3864075a2ecd33fd591d0fff05eff266d7b"
+}

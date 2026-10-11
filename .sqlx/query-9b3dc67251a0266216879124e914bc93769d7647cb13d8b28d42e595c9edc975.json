@@ -1,0 +1,18 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT hash FROM commits WHERE hash IN (SELECT value FROM json_each(?))",
+	"describe": {
+		"columns": [
+			{
+				"name": "hash",
+				"ordinal": 0,
+				"type_info": "Text"
+			}
+		],
+		"parameters": {
+			"Right": 1
+		},
+		"nullable": [false]
+	},
+	"hash": "9b3dc67251a0266216879124e914bc93769d7647cb13d8b28d42e595c9edc975"
+}

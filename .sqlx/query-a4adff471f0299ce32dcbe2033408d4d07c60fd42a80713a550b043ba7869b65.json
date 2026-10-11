@@ -1,0 +1,12 @@
+{
+	"db_name": "SQLite",
+	"query": "DELETE FROM edge WHERE view_id = ?",
+	"describe": {
+		"columns": [],
+		"parameters": {
+			"Right": 1
+		},
+		"nullable": []
+	},
+	"hash": "a4adff471f0299ce32dcbe2033408d4d07c60fd42a80713a550b043ba7869b65"
+}

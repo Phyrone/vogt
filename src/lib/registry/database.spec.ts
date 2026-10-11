@@ -2,6 +2,12 @@ import { expect, test, vi } from 'vitest';
 import { initDatabase } from '#lib/db/index.ts';
 import { database } from './database.ts';
 
+// the Tauri side of the registry: nothing to call but the cache removal
+vi.mock('@tauri-apps/api/core', () => ({
+	invoke: async () => '/tmp/never-opened.db',
+	isTauri: () => true
+}));
+
 // tauri-plugin-sql, backed by an in-memory SQLite that the real migrations set up
 vi.mock('@tauri-apps/plugin-sql', async () => {
 	const { readdirSync, readFileSync } = await import('node:fs');
@@ -15,7 +21,8 @@ vi.mock('@tauri-apps/plugin-sql', async () => {
 				}
 				return {
 					select: async (sql: string, params: never[]) => sqlite.prepare(sql).all(...params),
-					execute: async (sql: string, params: never[]) => sqlite.prepare(sql).run(...params)
+					execute: async (sql: string, params: never[]) => sqlite.prepare(sql).run(...params),
+					close: async () => true
 				};
 			}
 		}

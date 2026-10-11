@@ -1,31 +1,29 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import type { Opened as GitSummary } from '#lib/bindings/Opened.ts';
+import type { Progress } from '#lib/bindings/Progress.ts';
+import type { ViewInfo } from '#lib/bindings/ViewInfo.ts';
+import { loadRepoDatabase, type RepoDatabase, type RepoEdge, type RepoRow } from '#lib/db/repo.ts';
 import { layoutGraph } from '#lib/graph/layout.ts';
 import { repository as mock } from './mock.ts';
 import {
 	LINE_COLORS,
 	type Commit,
 	type FileChange,
+	type HistoryEdge,
 	type HistoryRow,
 	type HistoryWindow,
+	type Ref,
 	type Repository
 } from './types.ts';
 
-/** What `open_history` returns: a repository without anything about how it is shown. */
-export interface GitSummary extends Pick<
-	Repository,
-	'user' | 'trunk' | 'headLine' | 'head' | 'stashes' | 'tags'
-> {
-	ahead: number;
-	lines: { id: string; name: string; remote: boolean; merged: boolean }[];
-}
-
-/** What `history_rows` returns. */
-export interface GitWindow extends Omit<HistoryWindow, 'rows'> {
-	rows: (Omit<HistoryRow, 'when' | 'body' | 'files'> & {
-		body: string | null;
-		/** Seconds since the Unix epoch. */
-		time: number;
-	})[];
+/** An opened repository: what the interface draws, and where its rows live. */
+export interface Opened {
+	repository: Repository;
+	/** The cache database, or null for the synthetic repository. */
+	db: RepoDatabase | null;
+	/** The unmasked view, or null for the synthetic repository. */
+	view: ViewInfo | null;
+	progress: Progress;
 }
 
 /** How long ago `time` was, as short as the history's When column; both in seconds since the epoch. */
@@ -70,35 +68,63 @@ export function toRepository(summary: GitSummary): Repository {
 	};
 }
 
-/** Give rows read from git their relative times. `now` is in milliseconds. */
-export function toWindow(window: GitWindow, now: number): HistoryWindow {
+/** One row as the interface draws it. `now` is in milliseconds. */
+export function toHistoryRow(row: RepoRow, now: number): HistoryRow {
 	return {
-		...window,
-		rows: window.rows.map(({ time, body, ...row }) => ({
-			...row,
-			body: body ?? undefined,
-			when: ago(time, now / 1000)
-		}))
+		hash: row.hash,
+		subject: row.subject,
+		body: row.body ?? undefined,
+		author: row.author,
+		when: ago(row.time, now / 1000),
+		line: row.line,
+		parents: JSON.parse(row.parents) as string[],
+		refs: JSON.parse(row.refs) as Ref[],
+		pushed: Boolean(row.pushed),
+		row: row.row,
+		lane: row.lane
+	};
+}
+
+/** One edge as the graph draws it. */
+export function toHistoryEdge(edge: RepoEdge): HistoryEdge {
+	return {
+		from: edge.from,
+		to: edge.to,
+		line: edge.line,
+		points: JSON.parse(edge.points) as [number, number][]
 	};
 }
 
 /**
- * Open the repository in the directory `path`; `repo` is its id in the registry. Outside the
- * Tauri shell, a synthetic one.
+ * Open the repository in the directory `path`; `repo` is its id in the registry, `workspace` the
+ * id of the workspace that holds it. Outside the Tauri shell, a synthetic one.
  */
-export async function readRepository(repo: string, path: string): Promise<Repository> {
-	if (!isTauri()) return mock;
-	return toRepository(await invoke<GitSummary>('open_history', { repo, path }));
+export async function readRepository(
+	workspace: string,
+	repo: string,
+	path: string
+): Promise<Opened> {
+	if (!isTauri()) {
+		const commits = mock.commits ?? [];
+		return {
+			repository: mock,
+			db: null,
+			view: null,
+			progress: { indexed: commits.length, laid: commits.length, complete: true }
+		};
+	}
+	const summary = await invoke<GitSummary>('open_history', { workspace, repo, path });
+	return {
+		repository: toRepository(summary),
+		db: await loadRepoDatabase(summary.cachePath),
+		view: summary.view,
+		progress: summary.progress
+	};
 }
 
-/** The rows `from` up to `to` of an opened repository's history, masked to the lines `only` unless that is empty. */
-export async function historyRows(
-	path: string,
-	from: number,
-	to: number,
-	only: string[]
-): Promise<HistoryWindow> {
-	return toWindow(await invoke<GitWindow>('history_rows', { path, from, to, only }), Date.now());
+/** Lays the picked lines out as a view of their own, and answers with it. */
+export async function materializeView(repo: string, only: string[]): Promise<ViewInfo> {
+	return invoke<ViewInfo>('materialize_view', { repo, only });
 }
 
 /** The same window for commits held in the webview, which only the synthetic repository are. */

@@ -1,4 +1,4 @@
-import { listWorkspaces, REGISTRY } from '#lib/registry/api.ts';
+import { listWorkspaces, REGISTRY, syncRepositories } from '#lib/registry/api.ts';
 import type { LayoutLoad } from './$types';
 
 // Tauri doesn't have a Node.js server to do proper SSR
@@ -10,5 +10,8 @@ export const prerender = false;
 
 export const load: LayoutLoad = async ({ depends }) => {
 	depends(REGISTRY);
-	return { workspaces: await listWorkspaces() };
+	const workspaces = await listWorkspaces();
+	// every registered repository is watched and indexed while the app runs
+	await syncRepositories(workspaces);
+	return { workspaces };
 };

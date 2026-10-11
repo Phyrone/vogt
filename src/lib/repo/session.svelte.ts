@@ -1,25 +1,43 @@
-import { commitFiles, historyRows, layoutWindow } from './history.ts';
+import { isTauri } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import type { UnlistenFn } from '@tauri-apps/api/event';
+import type { Changed } from '#lib/bindings/Changed.ts';
+import type { Progress } from '#lib/bindings/Progress.ts';
+import type { ViewInfo } from '#lib/bindings/ViewInfo.ts';
+import { locate as repoLocate, window as repoWindow, type RepoDatabase } from '#lib/db/repo.ts';
+import {
+	commitFiles,
+	layoutWindow,
+	materializeView,
+	readRepository,
+	toHistoryEdge,
+	toHistoryRow,
+	type Opened
+} from './history.ts';
 import type { Commit, FileChange, HistoryWindow, Repository } from './types.ts';
 
 export const WORKING = 'working-changes';
 
 /** The state of one open repository, shared by the repository's toolbar and its pages. */
 export class RepoSession {
-	readonly user: string;
-	readonly lines: Repository['lines'];
-	readonly trunk: string;
-	readonly headLine: string;
-	readonly stashes: string[];
-	readonly tags: string[];
-	/** Counted by the backend for a real repository. */
-	readonly #ahead: number | undefined;
-
+	user = $state('');
+	lines = $state<Repository['lines']>({});
+	trunk = $state('');
+	headLine = $state('');
+	head = $state('');
+	stashes = $state<string[]>([]);
+	tags = $state<string[]>([]);
 	/** Held here only for the synthetic repository; a real history is asked for with `rows`. */
 	commits: Commit[] | undefined = $state();
 	changes: FileChange[] = $state([]);
-	head = $state('');
+	/** How far the backend's index is. */
+	progress: Progress = $state({ indexed: 0, laid: 0, complete: true });
+	/** The unmasked view of a real history. */
+	view: ViewInfo | null = $state(null);
 	/** Goes up whenever the history changed and has to be asked for again. */
 	version = $state(0);
+	#ahead = $state<number | undefined>(undefined);
+	#db: RepoDatabase | null;
 
 	/** The synthetic history: newest first; uncommitted work, when there is any, is the first row. */
 	#listed = $derived.by((): Commit[] => {
@@ -48,21 +66,15 @@ export class RepoSession {
 			.slice(0, 6)
 	);
 
-	/** `path` is the directory `repository` was read from. */
+	/** `workspaceId` and `repoId` are the registry's ids; `path` is the directory it was read from. */
 	constructor(
-		repository: Repository,
+		opened: Opened,
+		readonly workspaceId: string,
+		readonly repoId: string,
 		readonly path: string
 	) {
-		this.user = repository.user;
-		this.lines = repository.lines;
-		this.trunk = repository.trunk;
-		this.headLine = repository.headLine;
-		this.stashes = repository.stashes;
-		this.tags = repository.tags;
-		this.#ahead = repository.ahead;
-		this.commits = repository.commits && [...repository.commits];
-		this.changes = repository.changes.map((change) => ({ ...change }));
-		this.head = repository.head;
+		this.#db = opened.db;
+		this.#apply(opened);
 	}
 
 	/** Commits on the checked-out line that no remote has. */
@@ -70,13 +82,71 @@ export class RepoSession {
 		return this.#ahead ?? this.#unpushed;
 	}
 
+	/** Takes over everything a freshly opened repository carries. */
+	#apply(opened: Opened) {
+		this.user = opened.repository.user;
+		this.lines = opened.repository.lines;
+		this.trunk = opened.repository.trunk;
+		this.headLine = opened.repository.headLine;
+		this.head = opened.repository.head;
+		this.stashes = opened.repository.stashes;
+		this.tags = opened.repository.tags;
+		this.#ahead = opened.repository.ahead;
+		this.commits = opened.repository.commits && [...opened.repository.commits];
+		this.changes = opened.repository.changes.map((change) => ({ ...change }));
+		this.view = opened.view;
+		this.progress = opened.progress;
+		this.version = opened.view?.version ?? 0;
+	}
+
+	/** Listens for the backend's updates to this repository; returns how to stop. */
+	async listen(): Promise<UnlistenFn> {
+		if (!isTauri()) return () => {};
+		return listen<Changed>('repo-changed', (event) => {
+			const changed = event.payload;
+			if (changed.repo !== this.repoId) return;
+			this.progress = {
+				indexed: changed.indexed,
+				laid: changed.laid,
+				complete: changed.complete
+			};
+			if (changed.version === this.version) return;
+			this.version = changed.version;
+			void this.refresh();
+		});
+	}
+
+	/** Re-reads the summary after the cache moved on. */
+	async refresh(): Promise<void> {
+		// the synthetic repository holds its own history and has nothing to re-read
+		if (this.commits) return;
+		this.#apply(await readRepository(this.workspaceId, this.repoId, this.path));
+	}
+
 	/** The rows `from` up to `to` of the history, masked to the lines `only` unless that is empty. */
 	async rows(from: number, to: number, only: string[]): Promise<HistoryWindow> {
-		if (!this.commits) return historyRows(this.path, from, to, only);
-		const listed = only.length
-			? this.#listed.filter((commit) => only.includes(commit.line))
-			: this.#listed;
-		return layoutWindow(listed, this.trunk, from, to);
+		if (this.commits) {
+			const listed = only.length
+				? this.#listed.filter((commit) => only.includes(commit.line))
+				: this.#listed;
+			return layoutWindow(listed, this.trunk, from, to);
+		}
+		if (!this.#db) throw new Error('This repository’s cache is not open.');
+		const view = only.length ? await materializeView(this.repoId, only) : this.view;
+		if (!view) throw new Error('This repository’s history is not laid out yet.');
+		const { rows, edges } = await repoWindow(this.#db, view, from, to);
+		const now = Date.now();
+		return {
+			total: view.total,
+			lanes: view.lanes,
+			rows: rows.map((row) => toHistoryRow(row, now)),
+			edges: edges.map(toHistoryEdge)
+		};
+	}
+
+	/** The row the commit `hash` sits in, of the unmasked view. */
+	async locate(hash: string): Promise<number | null> {
+		return this.#db ? repoLocate(this.#db, hash) : null;
 	}
 
 	/** The files a commit changed. */

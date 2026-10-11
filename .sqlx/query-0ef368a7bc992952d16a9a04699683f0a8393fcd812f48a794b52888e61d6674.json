@@ -1,0 +1,28 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT hash, lane, line FROM node WHERE view_id = ? ORDER BY row",
+	"describe": {
+		"columns": [
+			{
+				"name": "hash",
+				"ordinal": 0,
+				"type_info": "Text"
+			},
+			{
+				"name": "lane",
+				"ordinal": 1,
+				"type_info": "Integer"
+			},
+			{
+				"name": "line",
+				"ordinal": 2,
+				"type_info": "Text"
+			}
+		],
+		"parameters": {
+			"Right": 1
+		},
+		"nullable": [false, false, false]
+	},
+	"hash": "0ef368a7bc992952d16a9a04699683f0a8393fcd812f48a794b52888e61d6674"
+}

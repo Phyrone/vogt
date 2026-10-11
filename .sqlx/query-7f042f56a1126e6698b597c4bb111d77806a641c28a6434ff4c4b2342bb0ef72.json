@@ -1,0 +1,38 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT row, hash, line, pushed, refs FROM node\n         WHERE view_id = ? AND line IN (SELECT value FROM json_each(?))\n         ORDER BY row",
+	"describe": {
+		"columns": [
+			{
+				"name": "row",
+				"ordinal": 0,
+				"type_info": "Integer"
+			},
+			{
+				"name": "hash",
+				"ordinal": 1,
+				"type_info": "Text"
+			},
+			{
+				"name": "line",
+				"ordinal": 2,
+				"type_info": "Text"
+			},
+			{
+				"name": "pushed",
+				"ordinal": 3,
+				"type_info": "Integer"
+			},
+			{
+				"name": "refs",
+				"ordinal": 4,
+				"type_info": "Text"
+			}
+		],
+		"parameters": {
+			"Right": 2
+		},
+		"nullable": [false, false, false, false, false]
+	},
+	"hash": "7f042f56a1126e6698b597c4bb111d77806a641c28a6434ff4c4b2342bb0ef72"
+}

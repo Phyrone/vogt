@@ -4,6 +4,7 @@ use tauri_plugin_sql::Migration;
 mod cache;
 mod git;
 mod history;
+mod index;
 mod layout;
 
 /// The database's name for tauri-plugin-sql; `src/lib/db/index.ts` loads the same one.
@@ -22,14 +23,16 @@ pub fn run() {
         )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(history::Histories::default())
+        .manage(index::Repos::default())
         .setup(init_app)
         .invoke_handler(tauri::generate_handler![
             git::list_worktrees,
             git::create_repository,
             history::open_history,
-            history::history_rows,
-            history::commit_files
+            history::materialize_view,
+            history::commit_files,
+            index::sync_repositories,
+            index::forget_repo
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -45,18 +48,33 @@ fn migrations() -> Vec<Migration> {
     vogt_macros::sql_migrations!("../drizzle")
 }
 
+/// The migrations `pnpm db:repo:generate` writes to `drizzle-repo/`, applied
+/// by `cache::prepare` when a repository's cache file is created.
+pub fn repo_migrations() -> Vec<Migration> {
+    vogt_macros::sql_migrations!("../drizzle-repo")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn every_generated_migration_is_included() {
-        let generated = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../drizzle"))
+    fn assert_numbered(dir: &str, migrations: Vec<Migration>) {
+        let generated = std::fs::read_dir(format!("{}/../{dir}", env!("CARGO_MANIFEST_DIR")))
             .unwrap()
             .filter(|entry| entry.as_ref().unwrap().path().extension() == Some("sql".as_ref()))
             .count();
-        let versions: Vec<i64> = migrations().iter().map(|m| m.version).collect();
+        let versions: Vec<i64> = migrations.iter().map(|m| m.version).collect();
 
         assert_eq!(versions, (1..=generated as i64).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn every_generated_migration_is_included() {
+        assert_numbered("drizzle", migrations());
+    }
+
+    #[test]
+    fn every_repo_migration_is_included() {
+        assert_numbered("drizzle-repo", repo_migrations());
     }
 }
