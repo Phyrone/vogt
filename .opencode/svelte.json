@@ -1,0 +1,7 @@
+{
+  "$schema": "https://svelte.dev/opencode/schema.json",
+  "autoupdate": true,
+  "instructions": { "enabled": true },
+  "mcp": {"enabled": false},
+  "skills": { "enabled": true }
+}
