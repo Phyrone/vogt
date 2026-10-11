@@ -1,0 +1,1 @@
+CREATE INDEX `node_line` ON `node` (`view_id`,`line`);

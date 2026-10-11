@@ -578,8 +578,7 @@ pub async fn materialize_mask(
     let only_json = serde_json::to_string(&only).map_err(|e| e.to_string())?;
     let rows = sqlx::query!(
         "SELECT row, hash, line, pushed, refs FROM node
-         WHERE view_id = ? AND line IN (SELECT value FROM json_each(?))
-         ORDER BY row",
+         WHERE view_id = ? AND line IN (SELECT value FROM json_each(?))",
         ViewInfo::ALL,
         only_json
     )
@@ -600,7 +599,9 @@ pub async fn materialize_mask(
         .enumerate()
         .map(|(index, line)| (line.id.as_str(), index))
         .collect();
-    let picked: Vec<&_> = rows.iter().collect();
+    // the picked rows keep the order they had in the unmasked view
+    let mut picked: Vec<&_> = rows.iter().collect();
+    picked.sort_by_key(|row| row.row);
 
     let hashes: Vec<&str> = picked.iter().map(|row| row.hash.as_str()).collect();
     let mut parents: HashMap<String, Vec<String>> = HashMap::new();

@@ -578,6 +578,7 @@ pub async fn ahead(pool: &Pool<Sqlite>, line: &str) -> Result<i64, sqlx::Error> 
 mod tests {
     use super::*;
     use git2::Oid;
+    use sqlx::Row;
 
     fn fact(hash: u8, time: i64, parents: &[u8]) -> Fact {
         Fact {
@@ -658,6 +659,28 @@ mod tests {
                 .unwrap();
             assert_eq!(expanded.len(), 1);
             assert_eq!(expanded[0].hash, child.hash);
+        });
+    }
+
+    #[test]
+    fn the_line_queries_use_the_line_index() {
+        tauri::async_runtime::block_on(async {
+            let pool = pool().await;
+            for query in [
+                "EXPLAIN QUERY PLAN
+                 SELECT COUNT(*) FROM node WHERE view_id = 'all' AND line = ?",
+                "EXPLAIN QUERY PLAN
+                 SELECT row, hash, line, pushed, refs FROM node
+                 WHERE view_id = 'all' AND line IN (SELECT value FROM json_each(?))",
+            ] {
+                let rows = sqlx::query(query).fetch_all(&pool).await.unwrap();
+                let plan = rows
+                    .iter()
+                    .map(|row| row.get::<String, _>(3))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(plan.contains("node_line"), "{plan}");
+            }
         });
     }
 

@@ -1,6 +1,6 @@
 {
 	"db_name": "SQLite",
-	"query": "SELECT row, hash, line, pushed, refs FROM node\n         WHERE view_id = ? AND line IN (SELECT value FROM json_each(?))\n         ORDER BY row",
+	"query": "SELECT row, hash, line, pushed, refs FROM node\n         WHERE view_id = ? AND line IN (SELECT value FROM json_each(?))",
 	"describe": {
 		"columns": [
 			{
@@ -34,5 +34,5 @@
 		},
 		"nullable": [false, false, false, false, false]
 	},
-	"hash": "7f042f56a1126e6698b597c4bb111d77806a641c28a6434ff4c4b2342bb0ef72"
+	"hash": "979ebdf4386e844b06861f50cf3d9c4e4e96fb7049f9b46045abf8374ae8bfeb"
 }

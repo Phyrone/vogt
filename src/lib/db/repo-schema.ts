@@ -68,7 +68,9 @@ export const node = sqliteTable(
 	(table) => [
 		primaryKey({ columns: [table.viewId, table.row] }),
 		// the history locates a commit by hash across a whole view
-		index('node_hash').on(table.viewId, table.hash)
+		index('node_hash').on(table.viewId, table.hash),
+		// `ahead` and the masked view filter a whole view by line
+		index('node_line').on(table.viewId, table.line)
 	]
 );
 
