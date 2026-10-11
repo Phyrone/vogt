@@ -1,25 +1,38 @@
 <script lang="ts">
 	import { createVirtualizer } from '@tanstack/svelte-virtual';
 	import { untrack } from 'svelte';
-	import { graphWidth, layoutGraph, PITCH } from '#lib/graph/layout.ts';
-	import { lineStyle, type Commit, type Line } from '#lib/repo/types.ts';
+	import { SvelteMap } from 'svelte/reactivity';
+	import { graphWidth, MAX_LANES, PITCH } from '#lib/graph/layout.ts';
+	import {
+		lineStyle,
+		type Commit,
+		type HistoryEdge,
+		type HistoryRow,
+		type HistoryWindow,
+		type Line
+	} from '#lib/repo/types.ts';
 	import X from '@lucide/svelte/icons/x';
 	import CommitGraph from './CommitGraph.svelte';
 	import LineBadge from './LineBadge.svelte';
 
 	interface Props {
-		/** Newest first; uncommitted work, when there is any, is the first row. */
-		rows: Commit[];
+		/** Where the rows come from. They are asked for as they scroll into view. */
+		source: {
+			rows(from: number, to: number, only: string[]): Promise<HistoryWindow>;
+			/** Changes when the history did, so that it is asked for again. */
+			version: number;
+		};
 		lines: Record<string, Line>;
 		trunk: string;
 		head: string;
-		selected: string;
+		/** The selected commit; null selects uncommitted work, when there is any. */
+		selected: Commit | null;
 		/** Ids of the lines picked in the sidebar. While there are any, the rest is dimmed or hidden. */
 		picked: string[];
 	}
 
 	let {
-		rows: all,
+		source,
 		lines,
 		trunk,
 		head,
@@ -27,27 +40,56 @@
 		picked = $bindable()
 	}: Props = $props();
 
+	/** Rows are asked for this many at a time. */
+	const CHUNK = 100;
+
 	/** Leave the rest out instead of dimming it. */
 	let hide = $state(false);
-	const rows = $derived(
-		hide && picked.length ? all.filter((commit) => picked.includes(commit.line)) : all
-	);
+	const only = $derived(hide ? picked : []);
 
-	const layout = $derived(layoutGraph(rows, trunk));
-	// never narrower than two lanes: the column's heading needs the room
-	const graph = $derived(graphWidth(Math.max(layout.lanes, 2)));
+	let total = $state(0);
+	let lanes = $state(1);
+	let failure = $state('');
+	/** The windows that arrived, by the number of their chunk. */
+	const chunks = new SvelteMap<number, HistoryWindow>();
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- bookkeeping nothing is drawn from
+	const requested = new Set<number>();
+	/** Goes up when everything is asked for again; answers to earlier questions are dropped. */
+	let epoch = $state(0);
 
-	function onkeydown(event: KeyboardEvent & { currentTarget: HTMLElement }) {
-		const step = { ArrowDown: 1, j: 1, ArrowUp: -1, k: -1 }[event.key];
-		if (!step) return;
-		const next = rows[rows.findIndex((c) => c.hash === selected) + step];
-		if (!next) return;
-		event.preventDefault();
-		selected = next.hash;
-		// the neighbour of a rendered row is within the overscan, so it is in the document already
-		$virtualizer.scrollToIndex(rows.indexOf(next));
-		event.currentTarget.querySelector<HTMLElement>(`[data-hash="${next.hash}"]`)?.focus();
+	function load(chunk: number) {
+		if (requested.has(chunk)) return;
+		requested.add(chunk);
+		const asked = epoch;
+		source.rows(chunk * CHUNK, (chunk + 1) * CHUNK, only).then(
+			(window) => {
+				if (asked !== epoch) return;
+				chunks.set(chunk, window);
+				total = window.total;
+				lanes = window.lanes;
+				// with no working changes to show, start on the checked-out commit
+				if (selected === null && !window.rows[0]?.pending) {
+					selected = window.rows.find((row) => row.hash === head) ?? null;
+				}
+			},
+			(reason) => {
+				if (asked === epoch) failure = String(reason);
+			}
+		);
 	}
+
+	// the history changed or is masked differently: every row is asked for again
+	$effect(() => {
+		void source.version;
+		void only.join('\n');
+		untrack(() => {
+			epoch++;
+			requested.clear();
+			chunks.clear();
+			failure = '';
+			load(0);
+		});
+	});
 
 	// only the rows in view are in the document, so a history can be any length
 	let scroller: HTMLDivElement;
@@ -58,10 +100,61 @@
 		overscan: 12
 	});
 	$effect(() => {
-		const count = rows.length;
+		const count = total;
 		untrack(() => $virtualizer.setOptions({ count }));
 	});
 	const items = $derived($virtualizer.getVirtualItems());
+	const first = $derived(items[0]?.index ?? 0);
+	const last = $derived(items.at(-1)?.index ?? -1);
+
+	$effect(() => {
+		void epoch;
+		const [from, to] = [Math.floor(first / CHUNK), Math.floor(last / CHUNK)];
+		untrack(() => {
+			for (let chunk = from; chunk <= to; chunk++) load(chunk);
+		});
+	});
+
+	const rowAt = (index: number) => chunks.get(Math.floor(index / CHUNK))?.rows[index % CHUNK];
+	const isSelected = (commit: Commit) =>
+		selected ? selected.hash === commit.hash : Boolean(commit.pending);
+	const select = (commit: Commit) => (selected = commit.pending ? null : commit);
+
+	/** What the graph draws: the stations in view and every edge that crosses them. */
+	const shown = $derived.by(() => {
+		const nodes: HistoryRow[] = [];
+		// eslint-disable-next-line svelte/prefer-svelte-reactivity -- local to this computation
+		const edges = new Map<string, HistoryEdge>();
+		for (let chunk = Math.floor(first / CHUNK); chunk <= Math.floor(last / CHUNK); chunk++) {
+			const window = chunks.get(chunk);
+			if (!window) continue;
+			for (const row of window.rows) if (row.row >= first && row.row <= last) nodes.push(row);
+			// an edge that crosses two chunks arrives with both
+			for (const edge of window.edges) {
+				if (edge.from <= last && edge.to >= first) edges.set(`${edge.from}-${edge.to}`, edge);
+			}
+		}
+		// the trunk is drawn first so that lines joining it sit on top
+		const drawn = [...edges.values()].sort(
+			(a, b) => Number(a.line !== trunk) - Number(b.line !== trunk)
+		);
+		return { nodes, edges: drawn };
+	});
+
+	// never narrower than two lanes: the column's heading needs the room
+	const graph = $derived(graphWidth(Math.min(Math.max(lanes, 2), MAX_LANES)));
+
+	function onkeydown(event: KeyboardEvent & { currentTarget: HTMLElement }) {
+		const step = { ArrowDown: 1, j: 1, ArrowUp: -1, k: -1 }[event.key];
+		const current = shown.nodes.find(isSelected);
+		// the neighbour of a row in view is within the overscan, so it has arrived and is in the document
+		const next = step && current && rowAt(current.row + step);
+		if (!next) return;
+		event.preventDefault();
+		select(next);
+		$virtualizer.scrollToIndex(next.row);
+		event.currentTarget.querySelector<HTMLElement>(`[data-hash="${next.hash}"]`)?.focus();
+	}
 </script>
 
 <section class="@container flex min-w-0 flex-1 flex-col" aria-label="History">
@@ -110,14 +203,20 @@
 			>
 		</div>
 	{/if}
-	{#if !rows.length && all.length}
-		<p class="p-6 text-base-content/70">No commits were made on these branches themselves.</p>
+	{#if failure}
+		<p role="alert" class="p-6 text-error">The history could not be read: {failure}</p>
+	{:else if !total && chunks.has(0)}
+		<p class="p-6 text-base-content/70">
+			{only.length ? 'No commits were made on these branches themselves.' : 'No commits yet.'}
+		</p>
 	{/if}
 	<div class="min-h-0 flex-1 overflow-y-auto" bind:this={scroller}>
-		<div class="relative" style:height="{rows.length * PITCH}px">
+		<div class="relative" style:height="{total * PITCH}px">
 			<CommitGraph
-				{layout}
-				rows={[items[0]?.index ?? 0, items.at(-1)?.index ?? -1]}
+				nodes={shown.nodes}
+				edges={shown.edges}
+				width={graph}
+				height={total * PITCH}
 				{lines}
 				{head}
 				{picked}
@@ -125,28 +224,26 @@
 			<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 			<ol {onkeydown}>
 				{#each items as item (item.index)}
-					{@const commit = rows[item.index]}
-					{#if commit}
-						{@const line = lines[commit.line]}
-						<li
-							class="absolute top-0 left-0 w-full"
-							style:transform="translateY({item.start}px)"
-							aria-setsize={rows.length}
-							aria-posinset={item.index + 1}
-						>
+					{@const commit = rowAt(item.index)}
+					<li
+						class="absolute top-0 left-0 w-full"
+						style:transform="translateY({item.start}px)"
+						aria-setsize={total}
+						aria-posinset={item.index + 1}
+					>
+						{#if commit}
+							{@const line = lines[commit.line]}
 							<button
 								type="button"
 								class={[
 									'flex w-full cursor-pointer items-center gap-3 pr-4 text-left -outline-offset-2 motion-safe:transition-opacity',
-									selected === commit.hash
-										? 'bg-(--line)/12 font-semibold'
-										: 'hover:bg-base-content/5',
+									isSelected(commit) ? 'bg-(--line)/12 font-semibold' : 'hover:bg-base-content/5',
 									picked.length > 0 && !picked.includes(commit.line) && 'opacity-45'
 								]}
 								style="{lineStyle(line)}; height: {PITCH}px"
 								data-hash={commit.hash}
-								aria-pressed={selected === commit.hash}
-								onclick={() => (selected = commit.hash)}
+								aria-pressed={isSelected(commit)}
+								onclick={() => select(commit)}
 							>
 								<span class="shrink-0" style:width="{graph}px"></span>
 								<span class="flex min-w-0 flex-1 items-center gap-2">
@@ -174,8 +271,14 @@
 									>{commit.when}</span
 								>
 							</button>
-						</li>
-					{/if}
+						{:else}
+							<!-- the row is on its way -->
+							<div class="flex items-center gap-3 pr-4" style:height="{PITCH}px" aria-hidden="true">
+								<span class="shrink-0" style:width="{graph}px"></span>
+								<span class="h-2.5 w-2/5 rounded-full bg-base-content/10"></span>
+							</div>
+						{/if}
+					</li>
 				{/each}
 			</ol>
 		</div>

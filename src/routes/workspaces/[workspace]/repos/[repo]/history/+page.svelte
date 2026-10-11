@@ -1,25 +1,23 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import CommitComposer from '#lib/components/CommitComposer.svelte';
 	import CommitDetail from '#lib/components/CommitDetail.svelte';
 	import History from '#lib/components/History.svelte';
 	import RefSidebar from '#lib/components/RefSidebar.svelte';
-	import { WORKING } from '#lib/repo/session.svelte.ts';
+	import type { Commit } from '#lib/repo/types.ts';
 
 	let { data } = $props();
 
 	const session = $derived(data.session);
 	const { lines, headLine } = $derived(session);
 
-	let selected = $state(untrack(() => (session.changes.length ? WORKING : session.head)));
+	// nothing selected is the working changes, or the checked-out commit once the history has it
+	let selected = $state<Commit | null>(null);
 	// the lines picked in the sidebar: a mask over the history, not a place to go
 	let picked = $state<string[]>([]);
 
-	const commit = $derived(session.commits.find((c) => c.hash === selected));
-
 	function oncommit(subject: string, body: string) {
-		const hash = session.commit(subject, body);
-		if (!session.changes.length) selected = hash;
+		const made = session.commit(subject, body);
+		if (!session.changes.length) selected = made;
 	}
 </script>
 
@@ -34,7 +32,7 @@
 	/>
 	<main class="flex min-w-0 flex-1">
 		<History
-			rows={session.rows}
+			source={session}
 			{lines}
 			trunk={session.trunk}
 			head={session.head}
@@ -44,14 +42,14 @@
 	</main>
 	<aside
 		class="w-64 shrink-0 overflow-y-auto border-l border-base-300 lg:w-72 xl:w-90"
-		aria-label={commit ? 'Commit' : 'Working changes'}
+		aria-label={selected ? 'Commit' : 'Working changes'}
 	>
-		{#if commit}
+		{#if selected}
 			<CommitDetail
-				{commit}
-				files={session.files(commit)}
-				line={lines[commit.line]}
-				isHead={commit.hash === session.head}
+				commit={selected}
+				files={session.files(selected)}
+				line={lines[selected.line]}
+				isHead={selected.hash === session.head}
 			/>
 		{:else if session.changes.length}
 			<CommitComposer

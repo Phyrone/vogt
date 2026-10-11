@@ -1,14 +1,27 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { layoutGraph } from '#lib/graph/layout.ts';
 import { repository as mock } from './mock.ts';
-import { LINE_COLORS, type Commit, type FileChange, type Repository } from './types.ts';
+import {
+	LINE_COLORS,
+	type Commit,
+	type FileChange,
+	type HistoryRow,
+	type HistoryWindow,
+	type Repository
+} from './types.ts';
 
-/** What the `read_history` command returns: a repository without anything about how it is shown. */
-export interface GitHistory extends Pick<
+/** What `open_history` returns: a repository without anything about how it is shown. */
+export interface GitSummary extends Pick<
 	Repository,
 	'user' | 'trunk' | 'headLine' | 'head' | 'stashes' | 'tags'
 > {
+	ahead: number;
 	lines: { id: string; name: string; remote: boolean; merged: boolean }[];
-	commits: (Omit<Commit, 'when' | 'body' | 'files'> & {
+}
+
+/** What `history_rows` returns. */
+export interface GitWindow extends Omit<HistoryWindow, 'rows'> {
+	rows: (Omit<HistoryRow, 'when' | 'body' | 'files'> & {
 		body: string | null;
 		/** Seconds since the Unix epoch. */
 		time: number;
@@ -41,31 +54,72 @@ export function badges(names: string[]): string[] {
 	});
 }
 
-/** Give a history read from git its badges, colours and relative times. `now` is in milliseconds. */
-export function toRepository(history: GitHistory, now: number): Repository {
-	const letters = badges(history.lines.map((line) => line.name));
+/** Give a repository read from git the badges and colours of its lines. */
+export function toRepository(summary: GitSummary): Repository {
+	const letters = badges(summary.lines.map((line) => line.name));
 	return {
-		...history,
+		...summary,
 		lines: Object.fromEntries(
-			history.lines.map((line, index) => [
+			summary.lines.map((line, index) => [
 				line.id,
 				{ ...line, badge: letters[index]!, color: LINE_COLORS[index % LINE_COLORS.length]! }
 			])
 		),
-		commits: history.commits.map(({ time, body, ...commit }) => ({
-			...commit,
-			body: body ?? undefined,
-			when: ago(time, now / 1000)
-		})),
 		// shortcut: the working tree is not read yet, so a real repository never shows working changes
 		changes: []
 	};
 }
 
-/** Read the repository in the directory `path`; outside the Tauri shell, a synthetic one. */
-export async function readRepository(path: string): Promise<Repository> {
+/** Give rows read from git their relative times. `now` is in milliseconds. */
+export function toWindow(window: GitWindow, now: number): HistoryWindow {
+	return {
+		...window,
+		rows: window.rows.map(({ time, body, ...row }) => ({
+			...row,
+			body: body ?? undefined,
+			when: ago(time, now / 1000)
+		}))
+	};
+}
+
+/**
+ * Open the repository in the directory `path`; `repo` is its id in the registry. Outside the
+ * Tauri shell, a synthetic one.
+ */
+export async function readRepository(repo: string, path: string): Promise<Repository> {
 	if (!isTauri()) return mock;
-	return toRepository(await invoke<GitHistory>('read_history', { path }), Date.now());
+	return toRepository(await invoke<GitSummary>('open_history', { repo, path }));
+}
+
+/** The rows `from` up to `to` of an opened repository's history, masked to the lines `only` unless that is empty. */
+export async function historyRows(
+	path: string,
+	from: number,
+	to: number,
+	only: string[]
+): Promise<HistoryWindow> {
+	return toWindow(await invoke<GitWindow>('history_rows', { path, from, to, only }), Date.now());
+}
+
+/** The same window for commits held in the webview, which only the synthetic repository are. */
+export function layoutWindow(
+	commits: Commit[],
+	trunk: string,
+	from: number,
+	to: number
+): HistoryWindow {
+	const layout = layoutGraph(commits, trunk);
+	const row = new Map(commits.map((commit, index) => [commit.hash, index]));
+	return {
+		total: commits.length,
+		lanes: layout.lanes,
+		rows: commits
+			.map((commit, index) => ({ ...commit, row: index, lane: layout.nodes[index]!.lane }))
+			.slice(from, to),
+		edges: layout.edges
+			.map((edge) => ({ ...edge, from: row.get(edge.from)!, to: row.get(edge.to)! }))
+			.filter((edge) => edge.from < to && edge.to >= from)
+	};
 }
 
 /** The files a commit changed, read on demand. */

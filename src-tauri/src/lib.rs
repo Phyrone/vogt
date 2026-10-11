@@ -1,8 +1,13 @@
 use tauri::App;
 use tauri_plugin_sql::Migration;
 
+mod cache;
 mod git;
 mod history;
+mod layout;
+
+/// The database's name for tauri-plugin-sql; `src/lib/db/index.ts` loads the same one.
+const DATABASE: &str = "sqlite:vogt.db";
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -12,16 +17,18 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(
             tauri_plugin_sql::Builder::new()
-                .add_migrations("sqlite:vogt.db", migrations())
+                .add_migrations(DATABASE, migrations())
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(history::Histories::default())
         .setup(init_app)
         .invoke_handler(tauri::generate_handler![
             git::list_worktrees,
             git::create_repository,
-            history::read_history,
+            history::open_history,
+            history::history_rows,
             history::commit_files
         ])
         .run(tauri::generate_context!())

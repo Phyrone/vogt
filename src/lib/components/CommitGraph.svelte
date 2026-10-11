@@ -1,24 +1,26 @@
 <script lang="ts">
-	import { graphWidth, INSET, PITCH, sliceGraph, type GraphLayout } from '#lib/graph/layout.ts';
-	import type { Line } from '#lib/repo/types.ts';
+	import { INSET, PITCH } from '#lib/graph/layout.ts';
+	import type { HistoryEdge, HistoryRow, Line } from '#lib/repo/types.ts';
 
 	interface Props {
-		layout: GraphLayout;
-		/** The first and last row to draw; the rest of a long history is left out. */
-		rows: [number, number];
+		/** The stations to draw; the rest of a long history is left out. */
+		nodes: HistoryRow[];
+		/** The edges to draw, in the order they are stacked. */
+		edges: HistoryEdge[];
+		/** The size of the whole graph, of which only the part in view is drawn. */
+		width: number;
+		height: number;
 		lines: Record<string, Line>;
 		head: string;
 		/** Ids of the lines picked in the sidebar; while there are any, every other line is dimmed. */
 		picked: string[];
 	}
 
-	let { layout, rows, lines, head, picked }: Props = $props();
-
-	const shown = $derived(sliceGraph(layout, rows[0], rows[1]));
+	let { nodes, edges, width, height, lines, head, picked }: Props = $props();
 
 	const x = (lane: number) => INSET + lane * PITCH;
 	const y = (row: number) => PITCH / 2 + row * PITCH;
-	const color = (line: string) => `var(--color-${lines[line].color})`;
+	const color = (line: string) => `var(--color-${lines[line]?.color ?? 'neutral'})`;
 	const path = (points: [number, number][]) =>
 		points.map(([lane, row], i) => `${i ? 'L' : 'M'}${x(lane)} ${y(row)}`).join('');
 	const opacity = (line: string) => (picked.length && !picked.includes(line) ? 0.25 : 1);
@@ -26,14 +28,14 @@
 
 <svg
 	class="pointer-events-none absolute top-0 left-0"
-	width={graphWidth(layout.lanes)}
-	height={layout.nodes.length * PITCH}
+	{width}
+	{height}
 	fill="none"
 	stroke-linecap="round"
 	stroke-linejoin="round"
 	aria-hidden="true"
 >
-	{#each shown.edges as edge (edge.from + edge.to)}
+	{#each edges as edge (`${edge.from}-${edge.to}`)}
 		<path
 			class="motion-safe:transition-opacity"
 			d={path(edge.points)}
@@ -44,9 +46,9 @@
 		/>
 	{/each}
 	<g fill="var(--color-base-100)" stroke-width="3.5">
-		{#each shown.nodes as node (node.hash)}
+		{#each nodes as node (node.hash)}
 			<g class="motion-safe:transition-opacity" opacity={opacity(node.line)}>
-				{#if node.kind === 'interchange'}
+				{#if node.parents.length > 1}
 					<rect
 						x={x(node.lane) - 11}
 						y={y(node.row) - 10}
@@ -70,7 +72,7 @@
 						cy={y(node.row)}
 						r="6.5"
 						stroke={color(node.line)}
-						stroke-dasharray={node.kind === 'pending' ? '3 3' : undefined}
+						stroke-dasharray={node.pending ? '3 3' : undefined}
 					/>
 				{/if}
 			</g>

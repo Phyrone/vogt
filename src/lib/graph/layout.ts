@@ -5,6 +5,14 @@ export const PITCH = 36;
 /** Distance from the graph's left edge to the first lane. */
 export const INSET = 20;
 
+/**
+ * The most lanes the graph column makes room for.
+ *
+ * shortcut: lanes past this are cut off, which a history with hundreds of parallel lines needs
+ * until the layout stops giving every merged branch a lane down to where it forked.
+ */
+export const MAX_LANES = 12;
+
 export function graphWidth(lanes: number): number {
 	return INSET * 2 + Math.max(0, lanes - 1) * PITCH;
 }
@@ -35,6 +43,9 @@ export interface GraphLayout {
 
 /**
  * Lay a history out as a line map. `commits` are newest first, one per row.
+ *
+ * Only the synthetic history is laid out here. A real one is laid out by the same algorithm in
+ * `src-tauri/src/layout.rs`; a change to one belongs in the other.
  *
  * Each line keeps one lane for as long as it runs: `trunk` takes lane 0, every other line the
  * innermost lane that is free between where it leaves its parent line and where it rejoins.
@@ -121,18 +132,4 @@ export function layoutGraph(commits: Commit[], trunk: string): GraphLayout {
 	edges.sort((x, y) => Number(x.line !== trunk) - Number(y.line !== trunk));
 
 	return { lanes: Math.max(1, taken.length), nodes, edges };
-}
-
-/** The part of a layout that shows between the rows `first` and `last`, both included. */
-export function sliceGraph(
-	layout: GraphLayout,
-	first: number,
-	last: number
-): Pick<GraphLayout, 'nodes' | 'edges'> {
-	return {
-		// a node's index is its row
-		nodes: layout.nodes.slice(first, last + 1),
-		// an edge runs downwards from its first point to its last
-		edges: layout.edges.filter(({ points }) => points[0]![1] <= last && points.at(-1)![1] >= first)
-	};
 }

@@ -13,6 +13,8 @@ repository = "https://github.com/Phyrone/vogt"
 # no network transports yet: they pull in OpenSSL and libssh2
 git2 = { version = "0.20", default-features = false }
 vogt-macros = { path = "crates/vogt-macros" }
+# the version tauri-plugin-sql uses, to share its connection pool
+sqlx = { version = "0.8", default-features = false, features = ["sqlite"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.152"
 tauri = { version = "2.12.3" }

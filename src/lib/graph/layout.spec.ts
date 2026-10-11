@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { repository } from '#lib/repo/mock.ts';
 import type { Commit } from '#lib/repo/types.ts';
-import { graphWidth, INSET, layoutGraph, PITCH, sliceGraph } from './layout';
+import { graphWidth, INSET, layoutGraph, PITCH } from './layout';
 
 const commit = (hash: string, line: string, parents: string[]): Commit => ({
 	hash,
@@ -54,7 +54,7 @@ describe('layoutGraph', () => {
 	});
 
 	it('reuses a lane once the line that held it has rejoined', () => {
-		const layout = layoutGraph(repository.commits, repository.trunk);
+		const layout = layoutGraph(repository.commits!, repository.trunk);
 		const laneOf = (hash: string) => layout.nodes.find((n) => n.hash === hash)?.lane;
 		expect(layout.lanes).toBe(4);
 		expect(laneOf('a41f9c2')).toBe(1);
@@ -75,32 +75,5 @@ describe('graphWidth', () => {
 	it('leaves an inset on both sides of the lanes', () => {
 		expect(graphWidth(1)).toBe(INSET * 2);
 		expect(graphWidth(4)).toBe(INSET * 2 + 3 * PITCH);
-	});
-});
-
-describe('sliceGraph', () => {
-	it('keeps the rows in view and every edge that crosses them', () => {
-		// a branch leaves the root and is merged at the top, passing four rows of trunk
-		const layout = layoutGraph(
-			[
-				commit('merge', 'main', ['m3', 'b1']),
-				commit('m3', 'main', ['m2']),
-				commit('m2', 'main', ['m1']),
-				commit('m1', 'main', ['root']),
-				commit('b1', 'feat', ['root']),
-				commit('root', 'main', [])
-			],
-			'main'
-		);
-
-		const { nodes, edges } = sliceGraph(layout, 2, 3);
-
-		expect(nodes.map((n) => n.hash)).toEqual(['m2', 'm1']);
-		expect(edges.map((e) => `${e.from}>${e.to}`).sort()).toEqual([
-			'm1>root',
-			'm2>m1',
-			'm3>m2',
-			'merge>b1'
-		]);
 	});
 });

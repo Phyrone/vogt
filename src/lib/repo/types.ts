@@ -60,11 +60,44 @@ export interface Repository {
 	/** Hash the checked-out line points at; empty before the first commit. */
 	head: string;
 	lines: Record<string, Line>;
-	/** Newest first. */
-	commits: Commit[];
+	/** Commits on the checked-out line that no remote has. Counted from `commits` when absent. */
+	ahead?: number;
+	/**
+	 * Newest first. Only the synthetic repository holds its commits here; a real history stays in
+	 * the backend and is asked for a window at a time.
+	 */
+	commits?: Commit[];
 	changes: FileChange[];
 	stashes: string[];
 	tags: string[];
+}
+
+/** A commit as a row of the history: where it sits in the list and in the graph. */
+export interface HistoryRow extends Commit {
+	row: number;
+	lane: number;
+}
+
+/** A stretch of a line between two commits. */
+export interface HistoryEdge {
+	/** Rows of the child and the parent. */
+	from: number;
+	to: number;
+	/** Id of the line whose colour the edge takes: the one that leaves or joins the other. */
+	line: string;
+	/** Corner points as [lane, row]. */
+	points: [number, number][];
+	pending?: boolean;
+}
+
+/** Some rows of a history and the edges that cross them. */
+export interface HistoryWindow {
+	/** How many rows the history has. */
+	total: number;
+	/** How many lanes the whole graph has. */
+	lanes: number;
+	rows: HistoryRow[];
+	edges: HistoryEdge[];
 }
 
 export function lineStyle(line: Line): string {

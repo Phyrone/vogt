@@ -8,6 +8,13 @@
       "when": 1791733441271,
       "tag": "0000_registry",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1791737499986,
+      "tag": "0001_commit_cache",
+      "breakpoints": true
     }
   ]
 }
