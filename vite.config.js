@@ -17,6 +17,7 @@ const host = process.env.TAURI_DEV_HOST;
 const ci = Boolean(process.env.CI);
 // the app's own version, shown in its settings; kept in step with tauri.conf.json and Cargo.toml
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+const is_tauri = Boolean(process.env.TAURI_ENV_PLATFORM); // set by `tauri dev` and `tauri build`
 // https://vite.dev/config/
 export default defineConfig({
 	define: { __APP_VERSION__: JSON.stringify(version) },
@@ -34,8 +35,8 @@ export default defineConfig({
 	clearScreen: false,
 	// 2. tauri expects a fixed port, fail if that port is not available
 	server: {
-		port: 1420,
-		strictPort: true,
+		port: is_tauri ? 1420 : undefined,
+		strictPort: is_tauri,
 		host: host || '127.0.0.1',
 		hmr: host
 			? {
