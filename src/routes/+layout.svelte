@@ -7,7 +7,6 @@
 	import '@fontsource-variable/jetbrains-mono';
 	import '../app.css';
 	import Theme from '#lib/components/Theme.svelte';
-	import { installMenu } from '#lib/menu.ts';
 	import { locale } from '#lib/settings/app.svelte.ts';
 
 	const { children } = $props();
@@ -15,10 +14,6 @@
 	// the language lives on the document, so every page follows it
 	$effect(() => {
 		document.documentElement.lang = locale.current;
-	});
-	// the native window menu, once per app run
-	$effect(() => {
-		void installMenu().catch((reason) => console.error('vogt: no window menu', reason));
 	});
 </script>
 
