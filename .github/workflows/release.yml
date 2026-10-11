@@ -84,12 +84,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macOS, Apple silicon
+          # one bundle for Apple silicon and Intel; a Tauri target, not a Rust one
+          - name: macOS
             os: macos-latest
-            target: aarch64-apple-darwin
-          - name: macOS, Intel
-            os: macos-latest
-            target: x86_64-apple-darwin
+            target: universal-apple-darwin
+            rustup: aarch64-apple-darwin x86_64-apple-darwin
           # an older Ubuntu, so the bundles also start where glibc is older
           - name: Linux
             os: ubuntu-22.04
@@ -113,7 +112,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
-      - run: rustup target add ${{ matrix.target }}
+      - name: Install the targets the runner does not build for by itself
+        if: matrix.rustup
+        run: rustup target add ${{ matrix.rustup }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
