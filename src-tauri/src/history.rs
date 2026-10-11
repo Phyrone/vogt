@@ -82,6 +82,12 @@ impl Refs {
         for branch in &self.branches {
             lines.push(format!("heads/{}\t{}", branch.name, branch.tip));
         }
+        if let Some(branch) = &self.head_branch {
+            lines.push(format!("head-branch\t{branch}"));
+        }
+        for (position, stash) in self.stashes.iter().enumerate() {
+            lines.push(format!("stash@{position}\t{stash}"));
+        }
         for (oid, refs) in &self.refs {
             for reference in refs {
                 lines.push(format!("{}\t{}\t{oid}", reference.kind, reference.label));
@@ -1191,6 +1197,36 @@ mod tests {
             let unique: HashSet<Oid> = oids.iter().copied().collect();
             assert_eq!(unique.len(), 7);
         });
+    }
+
+    #[test]
+    fn the_fingerprint_follows_stashes_and_the_checked_out_branch() {
+        let dir = scratch("fingerprint");
+        let mut repo = init(&dir);
+        let root = commit(&repo, "main", "root", "a\n", &[]);
+        repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
+
+        // a stash is a change the view has to hear about
+        let before = refs(&dir).unwrap().fingerprint();
+        std::fs::write(dir.join("file.txt"), "dirty\n").unwrap();
+        let signature = git2::Signature::now("Vogt", "vogt@example.com").unwrap();
+        repo.stash_save(&signature, "work in progress", None)
+            .unwrap();
+        let after_stash = refs(&dir).unwrap();
+        assert_eq!(after_stash.stashes, ["On main: work in progress"]);
+        let stashed = after_stash.fingerprint();
+        assert_ne!(before, stashed);
+
+        // a second branch on the same commit: HEAD moves, no tip does
+        repo.branch("other", &repo.find_commit(root).unwrap(), false)
+            .unwrap();
+        let before_switch = refs(&dir).unwrap().fingerprint();
+        repo.set_head("refs/heads/other").unwrap();
+        let switched = refs(&dir).unwrap().fingerprint();
+        assert_ne!(before_switch, switched);
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
