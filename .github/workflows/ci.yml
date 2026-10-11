@@ -52,11 +52,10 @@ jobs:
       - name: rustfmt
         id: rustfmt
         continue-on-error: ${{ fromJSON(env.LENIENT) }}
-        working-directory: src-tauri
-        run: cargo fmt --check
+        run: cargo fmt --all --check
       - name: Warn about Rust formatting
         if: steps.rustfmt.outcome == 'failure'
-        run: echo "::warning title=rustfmt::Rust code is not formatted. Run 'cargo fmt' in src-tauri. This fails on main."
+        run: echo "::warning title=rustfmt::Rust code is not formatted. Run 'cargo fmt'. This fails on main."
 
   check:
     name: Check
@@ -107,8 +106,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-nextest
@@ -118,29 +115,26 @@ jobs:
         run: pnpm vite:build
 
       - name: cargo check
-        working-directory: src-tauri
-        run: cargo check --locked --all-targets
+        run: cargo check --workspace --locked --all-targets
 
       - name: Clippy
         id: clippy
         continue-on-error: ${{ fromJSON(env.LENIENT) }}
-        working-directory: src-tauri
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --workspace --locked --all-targets -- -D warnings
       - name: Warn about Clippy findings
         if: steps.clippy.outcome == 'failure'
         shell: bash
         run: echo "::warning title=Clippy::Clippy reported findings on ${{ matrix.name }}, see the Clippy step. This fails on main."
 
       - name: Tests
-        working-directory: src-tauri
-        run: cargo nextest run --locked --profile ci
+        run: cargo nextest run --workspace --locked --profile ci
 
       - name: Upload test report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: rust-test-report-${{ matrix.name }}
-          path: src-tauri/target/nextest/ci/junit.xml
+          path: target/nextest/ci/junit.xml
           if-no-files-found: ignore
           retention-days: 14
 

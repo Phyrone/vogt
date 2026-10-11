@@ -20,7 +20,7 @@
 		"lint": "prettier --check . && eslint .",
 		"format": "prettier --write .",
 		"test": "pnpm test:unit --run && pnpm test:rust && pnpm test:e2e",
-		"test:rust": "cd src-tauri && cargo nextest run",
+		"test:rust": "cargo nextest run",
 		"test:unit": "vitest",
 		"test:unit:ui": "vitest --ui",
 		"test:e2e": "playwright install chromium && playwright test",

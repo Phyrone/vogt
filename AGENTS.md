@@ -26,7 +26,7 @@ Verify a change with all four checks:
 pnpm check                      # svelte-check, frontend types
 pnpm lint                       # prettier --check and eslint; fix formatting with pnpm format
 pnpm test                       # unit tests with coverage, Rust tests, then end-to-end tests
-cd src-tauri && cargo check     # Rust; there is no Cargo workspace at the root
+cargo check --workspace         # Rust; run cargo from the repository root
 ```
 
 - The dev server is pinned to port 1420 and fails instead of picking another one. A leftover `pnpm dev` is the usual cause.
@@ -39,7 +39,8 @@ cd src-tauri && cargo check     # Rust; there is no Cargo workspace at the root
 
 ## Conventions
 
-- **Version** is declared three times — `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`. Change all three together.
+- **Version** is declared three times — `package.json`, `src-tauri/tauri.conf.json` and `[workspace.package]` in the root `Cargo.toml`. Change all three together.
+- **Cargo workspace:** the root `Cargo.toml` owns the shared package fields, every dependency version with its features, and the build profiles. Crates take them with `<key>.workspace = true`; add a new dependency to `[workspace.dependencies]` first.
 - **Commits:** every commit follows [docs/commit-conventions.md](docs/commit-conventions.md) — a gitmoji + Conventional Commits header and the why in the body. The `committing` skill must be used before running `git commit`.
 - **Skills** live in `.agents/skills/`; the per-agent directories (`.claude/skills/`, `.hermes/skills/`) hold symlinks into it. The `skills` CLI (`pnpm skills`) manages the ones in `skills-lock.json`; `committing` is local to this repository and edited by hand.
 
