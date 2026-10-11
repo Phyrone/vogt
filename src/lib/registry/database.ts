@@ -43,9 +43,10 @@ export const database = {
 
 	/** Takes a repository out of a workspace and drops the cache built for it. */
 	async removeRepo(workspaceId: string, id: string): Promise<void> {
+		// the connection goes first, so a Windows delete is not blocked by it
+		await closeRepoDatabase(id);
+		await invoke<string>('forget_repo', { workspace: workspaceId, repo: id });
 		await db.delete(repo).where(and(eq(repo.workspaceId, workspaceId), eq(repo.id, id)));
-		const cachePath = await invoke<string>('forget_repo', { workspace: workspaceId, repo: id });
-		await closeRepoDatabase(cachePath);
 	},
 
 	/** Tells the backend which repositories to watch and keep in sync. */

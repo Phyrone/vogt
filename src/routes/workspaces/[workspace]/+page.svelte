@@ -34,8 +34,13 @@
 	}
 
 	async function remove(repo: string) {
-		await removeRepo(workspace.id, repo);
-		await invalidate(REGISTRY);
+		failure = '';
+		try {
+			await removeRepo(workspace.id, repo);
+			await invalidate(REGISTRY);
+		} catch (reason) {
+			failure = String(reason);
+		}
 	}
 </script>
 

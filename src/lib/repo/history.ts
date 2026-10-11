@@ -116,7 +116,7 @@ export async function readRepository(
 	const summary = await invoke<GitSummary>('open_history', { workspace, repo, path });
 	return {
 		repository: toRepository(summary),
-		db: await loadRepoDatabase(summary.cachePath),
+		db: await loadRepoDatabase(repo, summary.cachePath),
 		view: summary.view,
 		progress: summary.progress
 	};

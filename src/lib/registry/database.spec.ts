@@ -3,8 +3,12 @@ import { initDatabase } from '#lib/db/index.ts';
 import { database } from './database.ts';
 
 // the Tauri side of the registry: nothing to call but the cache removal
+const { invoke } = vi.hoisted(() => ({
+	invoke: vi.fn(async () => '/tmp/never-opened.db')
+}));
+
 vi.mock('@tauri-apps/api/core', () => ({
-	invoke: async () => '/tmp/never-opened.db',
+	invoke,
 	isTauri: () => true
 }));
 
@@ -48,5 +52,12 @@ test('the registry keeps workspaces and their repositories', async () => {
 	]);
 
 	await database.removeRepo(work.id, api.id);
+	expect((await database.listWorkspaces())[1]!.repos).toEqual([web]);
+
+	// a failed removal leaves the repository in place, so it can be tried again
+	invoke.mockRejectedValueOnce('Could not delete the cache file');
+	await expect(database.removeRepo(work.id, web.id)).rejects.toBe(
+		'Could not delete the cache file'
+	);
 	expect((await database.listWorkspaces())[1]!.repos).toEqual([web]);
 });

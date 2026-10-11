@@ -42,23 +42,23 @@ export interface RepoEdge {
 
 const open = new Map<string, Promise<RepoDatabase>>();
 
-/** Opens the cache file at `path` (once per path) for the frontend to query. */
-export function loadRepoDatabase(path: string): Promise<RepoDatabase> {
-	let pending = open.get(path);
+/** Opens the cache file at `path` (once per repository id) for the frontend to query. */
+export function loadRepoDatabase(id: string, path: string): Promise<RepoDatabase> {
+	let pending = open.get(id);
 	if (!pending) {
 		pending = (async () => {
 			const sqlite = await Database.load(`sqlite:${path}`);
 			return { sqlite, db: drizzle(proxy(sqlite), { schema }) };
 		})();
-		open.set(path, pending);
+		open.set(id, pending);
 	}
 	return pending;
 }
 
-/** Closes the cache file's connection, for a repository that was removed. */
-export async function closeRepoDatabase(path: string): Promise<void> {
-	const pending = open.get(path);
-	open.delete(path);
+/** Closes the cache of a repository that was removed. */
+export async function closeRepoDatabase(id: string): Promise<void> {
+	const pending = open.get(id);
+	open.delete(id);
 	if (pending) {
 		await pending.then((repo) => repo.sqlite.close()).catch(() => {});
 	}

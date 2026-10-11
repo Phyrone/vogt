@@ -171,6 +171,9 @@ fn watch(repo: &Arc<Repo>) -> Result<notify::RecommendedWatcher, String> {
 
 /// The worker of one repository: waits for changes to settle, then syncs.
 async fn worker<R: tauri::Runtime>(app: AppHandle<R>, repo: Arc<Repo>) {
+    // notifying on drop covers the panic case too, so `stop` cannot wait for
+    // a worker that is already gone
+    let _gone = Gone(&repo.stopped);
     loop {
         repo.wake.notified().await;
         if repo.stop.load(Ordering::SeqCst) {
@@ -190,14 +193,29 @@ async fn worker<R: tauri::Runtime>(app: AppHandle<R>, repo: Arc<Repo>) {
             eprintln!("vogt: syncing {} failed: {e}", repo.id);
         }
     }
-    repo.stopped.notify_one();
 }
 
-/// Stops the worker of an entry and waits for it to be gone.
+/// Notifies `stopped` when it is dropped, wherever the worker ends.
+struct Gone<'a>(&'a Notify);
+
+impl Drop for Gone<'_> {
+    fn drop(&mut self) {
+        self.0.notify_one();
+    }
+}
+
+/// Stops the worker of an entry, drops its watcher and closes its pool, so
+/// the cache file can be deleted and nothing the entry owns is left behind.
 async fn stop(repo: &Repo) {
     repo.stop.store(true, Ordering::SeqCst);
     repo.wake.notify_one();
     repo.stopped.notified().await;
+    // the watcher's callback owns the repo; dropping it breaks the cycle
+    repo.watcher
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take();
+    repo.cache.pool.close().await;
 }
 
 /// Keeps one repository's cache current: reads its refs and walks it.

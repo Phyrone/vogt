@@ -30,7 +30,7 @@ vi.mock('@tauri-apps/plugin-sql', async () => {
 
 test('a window and a locate read the cache the Rust side writes', async () => {
 	const path = '/tmp/vogt-repo-spec.db';
-	const repo = await loadRepoDatabase(path);
+	const repo = await loadRepoDatabase('repo-1', path);
 	const sqlite = opened.get(`sqlite:${path}`)!;
 	sqlite.exec(`
 		INSERT INTO commits (hash, time, parents, subject, author, body, expanded) VALUES
