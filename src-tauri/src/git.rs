@@ -21,6 +21,31 @@ pub struct Worktree {
     current: bool,
 }
 
+/// Every worktree of the repository at `path`, the main one first, as opened
+/// repositories. `path` may be any of them; a linked worktree whose directory
+/// is gone is left out. A directory that is not a repository has none.
+pub(crate) fn worktree_repos(path: &Path) -> Result<Vec<Repository>, git2::Error> {
+    let main = match Repository::open(path) {
+        Ok(repo) => Repository::open(repo.commondir())?,
+        Err(e) if e.code() == ErrorCode::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let linked = linked_worktree_repos(&main)?;
+    Ok(std::iter::once(main).chain(linked).collect())
+}
+
+/// The linked worktrees of `main`, as opened repositories; a worktree whose
+/// directory is gone cannot be opened and is left out.
+fn linked_worktree_repos(main: &Repository) -> Result<Vec<Repository>, git2::Error> {
+    Ok(main
+        .worktrees()?
+        .iter()
+        .flatten()
+        .filter_map(|name| main.find_worktree(name).ok())
+        .filter_map(|worktree| Repository::open_from_worktree(&worktree).ok())
+        .collect())
+}
+
 /// Every worktree of the repository at `path`, the main one first. `path` may
 /// be any of them. A directory that is not a repository has none.
 fn worktrees(path: &Path) -> Result<Vec<Worktree>, git2::Error> {
@@ -30,14 +55,7 @@ fn worktrees(path: &Path) -> Result<Vec<Worktree>, git2::Error> {
         Err(e) => return Err(e),
     };
     let main = Repository::open(opened.commondir())?;
-    // a linked worktree whose directory is gone cannot be opened and is left out
-    let linked: Vec<Repository> = main
-        .worktrees()?
-        .iter()
-        .flatten()
-        .filter_map(|name| main.find_worktree(name).ok())
-        .filter_map(|worktree| Repository::open_from_worktree(&worktree).ok())
-        .collect();
+    let linked = linked_worktree_repos(&main)?;
 
     Ok(std::iter::once(main)
         .chain(linked)

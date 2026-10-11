@@ -54,7 +54,8 @@ pub struct Refs {
     pub trunk: String,
     pub head_branch: Option<String>,
     pub head: Option<Oid>,
-    /// The HEADs of the worktrees the app has seen; more tips to walk.
+    /// The HEAD of every worktree, read fresh: a detached HEAD reaches commits
+    /// no branch does, and it must still be walked and drawn.
     pub heads: Vec<Oid>,
     pub remote_tips: Vec<Oid>,
     pub refs: HashMap<Oid, Vec<Ref>>,
@@ -143,6 +144,12 @@ pub fn refs(path: &Path) -> Result<Refs, git2::Error> {
     })?;
 
     let head = repo.head().ok().and_then(|head| head.target());
+    // every worktree's HEAD, detached or not: a linked worktree can point at a
+    // commit no branch reaches
+    let heads: Vec<Oid> = crate::git::worktree_repos(path)?
+        .iter()
+        .filter_map(|worktree| worktree.head().ok().and_then(|head| head.target()))
+        .collect();
     // set while a branch is checked out, even one without a commit yet
     let head_branch = repo
         .find_reference("HEAD")?
@@ -207,7 +214,7 @@ pub fn refs(path: &Path) -> Result<Refs, git2::Error> {
         trunk,
         head_branch,
         head,
-        heads: Vec::new(),
+        heads,
         remote_tips,
         refs,
         tags,
@@ -842,11 +849,6 @@ pub async fn open_history<R: tauri::Runtime>(
             .map_err(|e| e.to_string())?
     }
     .map_err(open_error)?;
-    index::note_heads(
-        &entry,
-        read.head.iter().copied().collect::<Vec<_>>().as_slice(),
-    )
-    .await?;
     index::wait_for_first(&entry).await;
 
     let pool = &entry.cache.pool;

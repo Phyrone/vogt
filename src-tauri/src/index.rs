@@ -222,11 +222,10 @@ async fn stop(repo: &Repo) {
 async fn sync<R: tauri::Runtime>(app: &AppHandle<R>, repo: &Repo) -> Result<(), String> {
     let pool = &repo.cache.pool;
     let path = repo.path.clone();
-    let mut refs = tauri::async_runtime::spawn_blocking(move || history::refs(&path))
+    let refs = tauri::async_runtime::spawn_blocking(move || history::refs(&path))
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
-    refs.heads = read_heads(pool).await?;
     let id = repo.id.clone();
     let report = move |version, indexed, laid, complete| {
         let _ = app.emit(
@@ -404,48 +403,6 @@ pub async fn walk(
     Ok(())
 }
 
-/// The HEADs of the worktrees the app has seen, as tips the walk must cover.
-async fn read_heads(pool: &sqlx::Pool<sqlx::Sqlite>) -> Result<Vec<Oid>, String> {
-    let heads: Vec<String> = cache::meta(pool, "heads")
-        .await
-        .map_err(|e| e.to_string())?
-        .and_then(|value| serde_json::from_str(&value).ok())
-        .unwrap_or_default();
-    Ok(heads.iter().filter_map(|head| head.parse().ok()).collect())
-}
-
-/// Remembers the HEADs the app has opened a worktree at, and wakes the worker
-/// when one of them is new.
-pub async fn note_heads(repo: &Repo, heads: &[Oid]) -> Result<(), String> {
-    let pool = &repo.cache.pool;
-    let mut known: Vec<String> = cache::meta(pool, "heads")
-        .await
-        .map_err(|e| e.to_string())?
-        .and_then(|value| serde_json::from_str(&value).ok())
-        .unwrap_or_default();
-    let mut added = false;
-    for head in heads {
-        let head = head.to_string();
-        if !known.contains(&head) {
-            known.push(head);
-            added = true;
-        }
-    }
-    if added {
-        cache::set_meta(
-            pool,
-            &[(
-                "heads",
-                serde_json::to_string(&known).map_err(|e| e.to_string())?,
-            )],
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-        repo.wake.notify_one();
-    }
-    Ok(())
-}
-
 /// Waits for the first laid-out round, so that opening a repository can show
 /// rows instead of a spinner whenever it can.
 pub async fn wait_for_first(repo: &Repo) {
@@ -578,6 +535,27 @@ mod tests {
         .unwrap()
     }
 
+    /// A commit no ref points at, parented on `parents`.
+    fn detached_commit(repo: &git2::Repository, message: &str, parents: &[Oid]) -> Oid {
+        let signature = git2::Signature::now("Vogt", "vogt@example.com").unwrap();
+        let tree = repo
+            .find_tree(repo.treebuilder(None).unwrap().write().unwrap())
+            .unwrap();
+        let parents: Vec<git2::Commit> = parents
+            .iter()
+            .map(|id| repo.find_commit(*id).unwrap())
+            .collect();
+        repo.commit(
+            None,
+            &signature,
+            &signature,
+            message,
+            &tree,
+            &parents.iter().collect::<Vec<_>>(),
+        )
+        .unwrap()
+    }
+
     /// A repository on `main` with `count` commits, and its refs.
     fn repository(name: &str, count: usize) -> (PathBuf, git2::Repository, Refs) {
         let dir = scratch(name);
@@ -653,13 +631,15 @@ mod tests {
             // the real one is watched, indexed and laid out
             let repos = app.state::<Repos>();
             let real = repos.get("real").expect("the real repository is watched");
+            let mut progress = cache::progress(&real.cache.pool).await.unwrap();
             for _ in 0..200 {
-                if cache::progress(&real.cache.pool).await.unwrap().complete {
+                // `complete` alone is set before the last layout runs
+                if (progress.indexed, progress.laid, progress.complete) == (3, 3, true) {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(25)).await;
+                progress = cache::progress(&real.cache.pool).await.unwrap();
             }
-            let progress = cache::progress(&real.cache.pool).await.unwrap();
             assert_eq!(
                 (progress.indexed, progress.laid, progress.complete),
                 (3, 3, true)
@@ -787,6 +767,80 @@ mod tests {
                 (progress.indexed, progress.laid, progress.complete),
                 (5, 5, true)
             );
+            std::fs::remove_dir_all(dir).unwrap();
+        });
+    }
+
+    #[test]
+    fn an_amended_tip_leaves_the_old_one_out_of_the_view() {
+        tauri::async_runtime::block_on(async {
+            let (dir, repo, _refs) = repository("amend", 3);
+            let root = scratch("amend-cache");
+            let app = app_with_cache(&root);
+            let cache = cache::open(app.handle(), "ws", "repo").await.unwrap();
+            let entry = Repo::new("repo".into(), dir.clone(), cache);
+
+            sync(app.handle(), &entry).await.unwrap();
+            let old = repo.head().unwrap().target().unwrap();
+            // a head an earlier open had noted, as the cache's `heads` key did
+            cache::set_meta(
+                &entry.cache.pool,
+                &[("heads", serde_json::to_string(&[old.to_string()]).unwrap())],
+            )
+            .await
+            .unwrap();
+
+            // the tip is replaced by a sibling on the same parent
+            let parent = repo.find_commit(old).unwrap().parent(0).unwrap().id();
+            let new = detached_commit(&repo, "rewritten", &[parent]);
+            repo.reference("refs/heads/main", new, true, "rewritten")
+                .unwrap();
+            assert_ne!(old, new);
+
+            sync(app.handle(), &entry).await.unwrap();
+
+            let hashes: Vec<String> =
+                sqlx::query_scalar!("SELECT hash FROM node WHERE view_id = 'all'")
+                    .fetch_all(&entry.cache.pool)
+                    .await
+                    .unwrap();
+            assert!(hashes.contains(&new.to_string()));
+            assert!(!hashes.contains(&old.to_string()));
+
+            entry.cache.pool.close().await;
+            std::fs::remove_dir_all(dir).unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        });
+    }
+
+    #[test]
+    fn the_detached_head_of_a_linked_worktree_is_walked() {
+        tauri::async_runtime::block_on(async {
+            let (dir, repo, _refs) = repository("worktree-head", 1);
+            let linked = dir.join("feature");
+            repo.worktree("feature", &linked, None).unwrap();
+
+            // a commit only the linked worktree's HEAD points at
+            let head = repo.head().unwrap().target().unwrap();
+            let orphan = detached_commit(&repo, "detached work", &[head]);
+            git2::Repository::open(&linked)
+                .unwrap()
+                .set_head_detached(orphan)
+                .unwrap();
+
+            let refs = history::refs(&dir).unwrap();
+            assert!(refs.heads.contains(&orphan));
+
+            let pool = pool().await;
+            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+                .await
+                .unwrap();
+            let hashes: Vec<String> =
+                sqlx::query_scalar!("SELECT hash FROM node WHERE view_id = 'all'")
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap();
+            assert!(hashes.contains(&orphan.to_string()));
             std::fs::remove_dir_all(dir).unwrap();
         });
     }

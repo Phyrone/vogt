@@ -1,0 +1,18 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT hash FROM node WHERE view_id = 'all'",
+	"describe": {
+		"columns": [
+			{
+				"name": "hash",
+				"ordinal": 0,
+				"type_info": "Text"
+			}
+		],
+		"parameters": {
+			"Right": 0
+		},
+		"nullable": [false]
+	},
+	"hash": "accc805e636784cf790f7eceb2d3e790d0c3a6ff955f512855e89cb21b1cbe88"
+}
