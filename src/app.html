@@ -5,15 +5,6 @@
 		<link rel="icon" href="%sveltekit.assets%/favicon.png" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>VOGT</title>
-		<script>
-			// the theme is known before the app boots, so a reload does not flash the default
-			try {
-				const theme = localStorage.getItem('vogt:theme');
-				if (theme) document.documentElement.dataset.theme = theme;
-			} catch {
-				// storage is unavailable; the default theme shows
-			}
-		</script>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

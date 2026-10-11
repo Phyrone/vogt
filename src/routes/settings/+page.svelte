@@ -1,7 +1,15 @@
 <script lang="ts">
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 	import TitleBar from '#lib/components/TitleBar.svelte';
-	import { appSettings } from '#lib/settings/app.svelte.ts';
+	import {
+		LANGUAGES,
+		locale,
+		localeChoice,
+		SYSTEM,
+		THEMES,
+		theme,
+		themeChoice
+	} from '#lib/settings/app.svelte.ts';
 	import {
 		appCachePath,
 		appDataPath,
@@ -14,49 +22,6 @@
 		rebuildCaches
 	} from '#lib/settings/system.ts';
 
-	// every theme daisyUI ships; the interface takes all of its colour from the active one
-	const themes = [
-		'light',
-		'dark',
-		'cupcake',
-		'bumblebee',
-		'emerald',
-		'corporate',
-		'synthwave',
-		'retro',
-		'cyberpunk',
-		'valentine',
-		'halloween',
-		'garden',
-		'forest',
-		'aqua',
-		'lofi',
-		'pastel',
-		'fantasy',
-		'wireframe',
-		'black',
-		'luxury',
-		'dracula',
-		'cmyk',
-		'autumn',
-		'business',
-		'acid',
-		'lemonade',
-		'night',
-		'coffee',
-		'winter',
-		'dim',
-		'nord',
-		'sunset',
-		'caramellatte',
-		'abyss',
-		'silk'
-	];
-	// translations are on the way; the choice is kept for when they arrive
-	const languages = [
-		{ id: 'en', name: 'English' },
-		{ id: 'de', name: 'Deutsch' }
-	];
 	const REPOSITORY = 'https://github.com/Phyrone/vogt';
 	const ISSUES = 'https://github.com/Phyrone/vogt/issues';
 
@@ -126,12 +91,12 @@
 						<select
 							class="select w-44 select-sm"
 							aria-label="Theme"
-							value={appSettings.theme}
-							onchange={(event) => appSettings.setTheme(event.currentTarget.value)}
+							value={theme.current}
+							onchange={(event) => (theme.current = themeChoice.parse(event.currentTarget.value))}
 						>
-							<option value="">System theme</option>
-							{#each themes as theme (theme)}
-								<option value={theme}>{theme}</option>
+							<option value={SYSTEM}>System theme</option>
+							{#each THEMES as name (name)}
+								<option value={name}>{name}</option>
 							{/each}
 						</select>
 					</div>
@@ -146,10 +111,10 @@
 					<select
 						class="select w-44 select-sm"
 						aria-label="Language"
-						value={appSettings.locale}
-						onchange={(event) => appSettings.setLocale(event.currentTarget.value)}
+						value={locale.current}
+						onchange={(event) => (locale.current = localeChoice.parse(event.currentTarget.value))}
 					>
-						{#each languages as language (language.id)}
+						{#each LANGUAGES as language (language.id)}
 							<option value={language.id}>{language.name}</option>
 						{/each}
 					</select>
