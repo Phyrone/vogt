@@ -1,155 +1,86 @@
 <script lang="ts">
-	import { invoke } from '@tauri-apps/api/core';
+	import CommitComposer from '#lib/components/CommitComposer.svelte';
+	import CommitDetail from '#lib/components/CommitDetail.svelte';
+	import History from '#lib/components/History.svelte';
+	import RefSidebar from '#lib/components/RefSidebar.svelte';
+	import Toolbar from '#lib/components/Toolbar.svelte';
+	import { repository } from '#lib/repo/mock.ts';
+	import type { Commit } from '#lib/repo/types.ts';
 
-	let name = $state('');
-	let greetMsg = $state('');
+	const WORKING = 'working-changes';
+	const { lines, trunk, headLine } = repository;
 
-	async function greet(event: Event) {
-		event.preventDefault();
-		// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-		greetMsg = await invoke('greet', { name });
+	let commits = $state([...repository.commits]);
+	let changes = $state(repository.changes.map((change) => ({ ...change })));
+	let head = $state(repository.head);
+	let selected = $state(WORKING);
+	let focusLine = $state<string | null>(null);
+
+	const rows = $derived.by((): Commit[] => {
+		if (!changes.length) return commits;
+		const working: Commit = {
+			hash: WORKING,
+			subject: `Working changes · ${changes.length} ${changes.length === 1 ? 'file' : 'files'}, not committed`,
+			author: '',
+			when: 'now',
+			line: headLine,
+			parents: [head],
+			pushed: false,
+			files: changes,
+			pending: true
+		};
+		return [working, ...commits];
+	});
+	const ahead = $derived(commits.filter((c) => !c.pushed).length);
+	const scopes = $derived(
+		[...new Set(commits.flatMap((c) => c.subject.match(/\(([\w-]+)\):/)?.[1] ?? []))].slice(0, 6)
+	);
+	const commit = $derived(commits.find((c) => c.hash === selected));
+
+	function oncommit(subject: string, body: string) {
+		const hash = Math.random().toString(16).slice(2, 9).padEnd(7, '0');
+		commits.unshift({
+			hash,
+			subject,
+			body: body || undefined,
+			author: repository.user,
+			when: 'now',
+			line: headLine,
+			parents: [head],
+			pushed: false,
+			files: changes
+				.filter((c) => c.staged)
+				.map(({ path, added, removed }) => ({ path, added, removed }))
+		});
+		head = hash;
+		changes = changes.filter((c) => !c.staged);
+		if (!changes.length) selected = hash;
 	}
 </script>
 
-<main class="container">
-	<h1>Welcome to Tauri + Svelte</h1>
-
-	<div class="row">
-		<a href="https://vite.dev" target="_blank">
-			<img src="/vite.svg" class="logo vite" alt="Vite Logo" />
-		</a>
-		<a href="https://tauri.app" target="_blank">
-			<img src="/tauri.svg" class="logo tauri" alt="Tauri Logo" />
-		</a>
-		<a href="https://svelte.dev" target="_blank">
-			<img src="/svelte.svg" class="logo svelte-kit" alt="SvelteKit Logo" />
-		</a>
+<div class="flex h-dvh flex-col bg-base-100 text-sm">
+	<Toolbar name={repository.name} line={lines[headLine]} {ahead} />
+	<div class="flex min-h-0 flex-1">
+		<RefSidebar
+			lines={Object.values(lines)}
+			{headLine}
+			{ahead}
+			stashes={repository.stashes}
+			tags={repository.tags}
+			bind:focusLine
+		/>
+		<main class="flex min-w-0 flex-1">
+			<History {rows} {lines} {trunk} {head} bind:selected {focusLine} />
+		</main>
+		<aside
+			class="w-64 shrink-0 overflow-y-auto border-l border-base-300 lg:w-72 xl:w-90"
+			aria-label={commit ? 'Commit' : 'Working changes'}
+		>
+			{#if commit}
+				<CommitDetail {commit} line={lines[commit.line]} isHead={commit.hash === head} />
+			{:else if changes.length}
+				<CommitComposer bind:changes line={lines[headLine]} {scopes} {oncommit} />
+			{/if}
+		</aside>
 	</div>
-	<p>Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
-
-	<form class="row" onsubmit={greet}>
-		<input id="greet-input" placeholder="Enter a name..." bind:value={name} />
-		<button type="submit">Greet</button>
-	</form>
-	<p>{greetMsg}</p>
-</main>
-
-<style>
-	.logo.vite:hover {
-		filter: drop-shadow(0 0 2em #747bff);
-	}
-
-	.logo.svelte-kit:hover {
-		filter: drop-shadow(0 0 2em #ff3e00);
-	}
-
-	:root {
-		font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-		font-size: 16px;
-		line-height: 24px;
-		font-weight: 400;
-
-		color: #0f0f0f;
-		background-color: #f6f6f6;
-
-		font-synthesis: none;
-		text-rendering: optimizeLegibility;
-		-webkit-font-smoothing: antialiased;
-		-moz-osx-font-smoothing: grayscale;
-		-webkit-text-size-adjust: 100%;
-	}
-
-	.container {
-		margin: 0;
-		padding-top: 10vh;
-		display: flex;
-		flex-direction: column;
-		justify-content: center;
-		text-align: center;
-	}
-
-	.logo {
-		height: 6em;
-		padding: 1.5em;
-		will-change: filter;
-		transition: 0.75s;
-	}
-
-	.logo.tauri:hover {
-		filter: drop-shadow(0 0 2em #24c8db);
-	}
-
-	.row {
-		display: flex;
-		justify-content: center;
-	}
-
-	a {
-		font-weight: 500;
-		color: #646cff;
-		text-decoration: inherit;
-	}
-
-	a:hover {
-		color: #535bf2;
-	}
-
-	h1 {
-		text-align: center;
-	}
-
-	input,
-	button {
-		border-radius: 8px;
-		border: 1px solid transparent;
-		padding: 0.6em 1.2em;
-		font-size: 1em;
-		font-weight: 500;
-		font-family: inherit;
-		color: #0f0f0f;
-		background-color: #ffffff;
-		transition: border-color 0.25s;
-		box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-	}
-
-	button {
-		cursor: pointer;
-	}
-
-	button:hover {
-		border-color: #396cd8;
-	}
-	button:active {
-		border-color: #396cd8;
-		background-color: #e8e8e8;
-	}
-
-	input,
-	button {
-		outline: none;
-	}
-
-	#greet-input {
-		margin-right: 5px;
-	}
-
-	@media (prefers-color-scheme: dark) {
-		:root {
-			color: #f6f6f6;
-			background-color: #2f2f2f;
-		}
-
-		a:hover {
-			color: #24c8db;
-		}
-
-		input,
-		button {
-			color: #ffffff;
-			background-color: #0f0f0f98;
-		}
-		button:active {
-			background-color: #0f0f0f69;
-		}
-	}
-</style>
+</div>

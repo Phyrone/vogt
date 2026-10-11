@@ -1,3 +1,36 @@
 @import 'tailwindcss';
 @plugin 'daisyui' {
+	themes: all;
+}
+
+@theme {
+	--font-sans: 'Barlow', ui-sans-serif, system-ui, sans-serif;
+	--font-signage: 'Barlow Semi Condensed', 'Barlow', ui-sans-serif, sans-serif;
+	--font-mono: 'JetBrains Mono Variable', ui-monospace, monospace;
+}
+
+/* badges, refs and anything else that reads like a sign */
+@utility signage {
+	font-family: var(--font-signage);
+	font-weight: 700;
+}
+
+/* small labels over a group of controls or a table column */
+@utility caps {
+	font-family: var(--font-signage);
+	font-size: 0.75rem;
+	font-weight: 600;
+	letter-spacing: 0.07em;
+	text-transform: uppercase;
+}
+
+@layer base {
+	::selection {
+		background: color-mix(in oklab, var(--color-base-content) 22%, transparent);
+	}
+
+	:focus-visible {
+		outline: 2px solid var(--color-base-content);
+		outline-offset: 2px;
+	}
 }
