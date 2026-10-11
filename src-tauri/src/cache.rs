@@ -444,6 +444,19 @@ pub async fn save_view(
     )
     .execute(&mut *transaction)
     .await?;
+    // a mask is derived from this view and rebuilt when it is asked for again,
+    // so the unmasked layout drops every other view with it
+    if id == ViewInfo::ALL {
+        sqlx::query!("DELETE FROM node WHERE view_id <> ?", id)
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query!("DELETE FROM edge WHERE view_id <> ?", id)
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query!("DELETE FROM views WHERE id <> ?", id)
+            .execute(&mut *transaction)
+            .await?;
+    }
     transaction.commit().await
 }
 

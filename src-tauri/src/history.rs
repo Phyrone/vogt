@@ -1230,6 +1230,36 @@ mod tests {
     }
 
     #[test]
+    fn laying_the_history_out_again_drops_the_masks() {
+        tauri::async_runtime::block_on(async {
+            let dir = scratch("masks");
+            let repo = init(&dir);
+            let root = commit(&repo, "main", "root", "a\n", &[]);
+            let pool = cache_pool(&dir, &[root]).await;
+            let refs = refs(&dir).unwrap();
+            materialize(&pool, &refs, 1).await.unwrap();
+
+            let masked = materialize_mask(&pool, &["main".into()], 1).await.unwrap();
+            assert!(masked.id.starts_with("mask:"));
+
+            // the next unmasked layout drops every mask; one that is asked for
+            // again is built from the fresh view
+            materialize(&pool, &refs, 2).await.unwrap();
+            for table in ["views", "node", "edge"] {
+                let left: i64 = sqlx::query_scalar(&format!(
+                    "SELECT COUNT(*) FROM {table} WHERE {} LIKE 'mask:%'",
+                    if table == "views" { "id" } else { "view_id" }
+                ))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                assert_eq!(left, 0, "{table} still holds a mask");
+            }
+            std::fs::remove_dir_all(dir).unwrap();
+        });
+    }
+
+    #[test]
     fn a_merge_message_names_the_branch_it_merged() {
         let name = |summary| merged_branch(summary);
         assert_eq!(
