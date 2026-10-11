@@ -1,0 +1,132 @@
+name: Release
+
+# Pushing a v<version> tag builds the bundles into a draft release. Publishing
+# that draft by hand is what ships it: only then does pages.yml move the update
+# channels to it.
+on:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.draft.outputs.id }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: The tag matches the three versions
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          declared() { # file, the version it declares
+            [ "$2" = "$version" ] && return
+            echo "::error file=$1::$1 declares $2, the tag says $version"
+            exit 1
+          }
+          declared package.json "$(jq -r .version package.json)"
+          declared src-tauri/tauri.conf.json "$(jq -r .version src-tauri/tauri.conf.json)"
+          declared Cargo.toml "$(cargo metadata --no-deps --format-version 1 |
+            jq -r '.packages[] | select(.name == "vogt") | .version')"
+
+      # found here in seconds instead of at the end of every build
+      - name: The updater can sign
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$(jq -r .plugins.updater.pubkey src-tauri/tauri.conf.json)" ]; then
+            echo "::error file=src-tauri/tauri.conf.json::plugins.updater.pubkey is empty"
+            exit 1
+          fi
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::The TAURI_SIGNING_PRIVATE_KEY secret is not set"
+            exit 1
+          fi
+
+      # one draft for every build to upload into; a re-run finds it again
+      - name: Create the draft
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # a version with a prerelease part goes to the beta channel only
+          PRERELEASE: ${{ contains(github.ref_name, '-') }}
+        run: |
+          id="$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id")"
+          if [ -z "$id" ]; then
+            id="$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$GITHUB_REF_NAME" -f name="VOGT $GITHUB_REF_NAME" \
+              -F draft=true -F prerelease="$PRERELEASE" -F generate_release_notes=true \
+              --jq .id)"
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: [ci, prepare]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS, Apple silicon
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: macOS, Intel
+            os: macos-latest
+            target: x86_64-apple-darwin
+          # an older Ubuntu, so the bundles also start where glibc is older
+          - name: Linux
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - name: Windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Tauri system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
+      - run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # builds the frontend itself, through beforeBuildCommand
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ needs.prepare.outputs.release_id }}
+          # without the tag the manifest links to releases/latest, which a prerelease never is
+          tagName: ${{ github.ref_name }}
+          # the release config turns the updater artifacts on, which need the signing key
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
