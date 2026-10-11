@@ -51,6 +51,30 @@ pub fn file<R: tauri::Runtime>(
     Ok(dir.join(format!("{repo}.db")))
 }
 
+/// The freedesktop cache directory tag: readers that see it know everything
+/// under the directory can be skipped, deleted or ignored.
+const TAG: &str = "CACHEDIR.TAG";
+const TAG_CONTENT: &str = "Signature: 8a477f597d28d172789f06886806bc55\n\
+                           # This file is a cache directory tag created by VOGT.\n\
+                           # For information about cache directory tags, see https://bford.info/cachedir/\n";
+
+/// Marks the app's cache directory with [`TAG`], so backup and indexing tools
+/// leave the repository caches alone.
+pub fn tag<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    write_tag(&dir)
+}
+
+/// Writes the tag into `dir` unless it is there already.
+fn write_tag(dir: &std::path::Path) -> Result<(), String> {
+    let file = dir.join(TAG);
+    if !file.exists() {
+        std::fs::write(&file, TAG_CONTENT).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Opens the cache file of a repository, creating it and its schema when it is
 /// not there yet.
 pub async fn open<R: tauri::Runtime>(
@@ -598,5 +622,25 @@ mod tests {
             assert_eq!(expanded.len(), 1);
             assert_eq!(expanded[0].hash, child.hash);
         });
+    }
+
+    #[test]
+    fn the_cache_directory_is_tagged_once() {
+        let dir = std::env::temp_dir().join(format!("vogt-tag-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        write_tag(&dir).unwrap();
+        let tag = dir.join(TAG);
+        let content = std::fs::read_to_string(&tag).unwrap();
+        assert!(content.starts_with("Signature: 8a477f597d28d172789f06886806bc55"));
+
+        // an existing tag is left as it is
+        let kept = "Signature: 8a477f597d28d172789f06886806bc55\n# kept\n";
+        std::fs::write(&tag, kept).unwrap();
+        write_tag(&dir).unwrap();
+        assert_eq!(std::fs::read_to_string(&tag).unwrap(), kept);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

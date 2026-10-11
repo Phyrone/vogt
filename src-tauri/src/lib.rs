@@ -40,6 +40,11 @@ pub fn run() {
 }
 
 fn init_app<R: tauri::Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::error::Error>> {
+    // the tag only tells other tools to leave the caches alone; losing it is
+    // not worth failing the start over
+    if let Err(failure) = cache::tag(app.handle()) {
+        eprintln!("vogt: could not tag the cache directory: {failure}");
+    }
     Ok(())
 }
 
