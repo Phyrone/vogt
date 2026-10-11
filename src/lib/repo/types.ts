@@ -7,7 +7,7 @@ export const LINE_COLORS = [
 	'info',
 	'success'
 ] as const;
-export type LineColor = (typeof LINE_COLORS)[number];
+export type LineColor = (typeof LINE_COLORS)[number] | 'neutral';
 
 /** A branch as the interface shows it: a named line with a lettered badge. */
 export interface Line {
@@ -102,4 +102,20 @@ export interface HistoryWindow {
 
 export function lineStyle(line: Line): string {
 	return `--line: var(--color-${line.color}); --line-content: var(--color-${line.color}-content)`;
+}
+
+/**
+ * The line a commit is drawn with; a row can arrive before its line does, so a
+ * missing one falls back to a neutral badge named after its id.
+ */
+export function lineOf(lines: Record<string, Line>, id: string): Line {
+	return (
+		lines[id] ?? {
+			id,
+			name: id,
+			badge: '?',
+			color: 'neutral',
+			remote: false
+		}
+	);
 }

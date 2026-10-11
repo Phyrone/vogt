@@ -38,6 +38,8 @@ export class RepoSession {
 	version = $state(0);
 	#ahead = $state<number | undefined>(undefined);
 	#db: RepoDatabase | null;
+	/** The changed version a refresh is already running for. */
+	#asked = 0;
 
 	/** The synthetic history: newest first; uncommitted work, when there is any, is the first row. */
 	#listed = $derived.by((): Commit[] => {
@@ -110,8 +112,10 @@ export class RepoSession {
 				laid: changed.laid,
 				complete: changed.complete
 			};
-			if (changed.version === this.version) return;
-			this.version = changed.version;
+			// `version` moves only with `lines`, in #apply; this keeps one refresh
+			// per version while it is still running
+			if (changed.version === this.version || changed.version === this.#asked) return;
+			this.#asked = changed.version;
 			void this.refresh();
 		});
 	}

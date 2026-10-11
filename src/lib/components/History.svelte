@@ -5,6 +5,7 @@
 	import type { Progress } from '#lib/bindings/Progress.ts';
 	import { graphWidth, MAX_LANES, PITCH } from '#lib/graph/layout.ts';
 	import {
+		lineOf,
 		lineStyle,
 		type Commit,
 		type HistoryEdge,
@@ -214,12 +215,10 @@
 			<span class="shrink-0 caps text-base-content/70">Only</span>
 			<span class="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
 				{#each picked as id (id)}
-					{@const line = lines[id]}
-					{#if line}
-						<span class="flex min-w-0 items-center gap-1.5">
-							<LineBadge {line} size="sm" /><span class="truncate font-semibold">{line.name}</span>
-						</span>
-					{/if}
+					{@const line = lineOf(lines, id)}
+					<span class="flex min-w-0 items-center gap-1.5">
+						<LineBadge {line} size="sm" /><span class="truncate font-semibold">{line.name}</span>
+					</span>
 				{/each}
 			</span>
 			<div class="join shrink-0">
@@ -270,7 +269,7 @@
 						aria-posinset={item.index + 1}
 					>
 						{#if commit}
-							{@const line = lines[commit.line]}
+							{@const line = lineOf(lines, commit.line)}
 							<button
 								type="button"
 								class={[

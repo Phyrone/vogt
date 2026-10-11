@@ -3,7 +3,7 @@
 	import CommitDetail from '#lib/components/CommitDetail.svelte';
 	import History from '#lib/components/History.svelte';
 	import RefSidebar from '#lib/components/RefSidebar.svelte';
-	import type { Commit } from '#lib/repo/types.ts';
+	import { lineOf, type Commit } from '#lib/repo/types.ts';
 	import { repoSettingsPath } from '#lib/settings/links.ts';
 
 	let { data } = $props();
@@ -53,13 +53,13 @@
 			<CommitDetail
 				commit={selected}
 				files={session.files(selected)}
-				line={lines[selected.line]}
+				line={lineOf(lines, selected.line)}
 				isHead={selected.hash === session.head}
 			/>
 		{:else if session.changes.length}
 			<CommitComposer
 				bind:changes={session.changes}
-				line={lines[headLine]}
+				line={lineOf(lines, headLine)}
 				scopes={session.scopes}
 				{oncommit}
 			/>
