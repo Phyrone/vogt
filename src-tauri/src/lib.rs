@@ -1,6 +1,8 @@
 use tauri::App;
 use tauri_plugin_sql::Migration;
 
+mod git;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -15,6 +17,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(init_app)
+        .invoke_handler(tauri::generate_handler![git::list_worktrees])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -10,6 +10,8 @@ license = "MIT"
 repository = "https://github.com/Phyrone/vogt"
 
 [workspace.dependencies]
+# no network transports yet: they pull in OpenSSL and libssh2
+git2 = { version = "0.20", default-features = false }
 vogt-macros = { path = "crates/vogt-macros" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.152"

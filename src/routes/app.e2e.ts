@@ -28,3 +28,16 @@ test('a repository that is gone says so', async ({ page }) => {
 		'This repository is no longer in the workspace'
 	);
 });
+
+test('switches between the worktrees of a repository', async ({ page }) => {
+	await page.goto('/workspaces/ws-personal/repos/repo-dotfiles/history');
+	await expect(page.locator('summary', { hasText: 'Worktree:' })).toHaveCount(0);
+
+	await page.goto('/workspaces/ws-personal/repos/repo-vogt/history');
+	const switcher = page.locator('summary', { hasText: 'Worktree:' });
+	await expect(switcher).toContainText('vogt');
+	await switcher.click();
+	await page.getByRole('link', { name: 'vogt-graph feat/commit-graph' }).click();
+	await expect(switcher).toContainText('vogt-graph');
+	await expect(page.getByRole('region', { name: 'History' })).toBeVisible();
+});

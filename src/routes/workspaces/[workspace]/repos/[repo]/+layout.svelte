@@ -10,6 +10,8 @@
 	workspaces={data.workspaces}
 	workspace={data.workspace}
 	repo={data.repo}
+	worktrees={data.worktrees}
+	worktree={data.worktree}
 	line={session.lines[session.headLine]}
 	ahead={session.ahead}
 />

@@ -5,6 +5,7 @@
 	import ArrowUpFromLine from '@lucide/svelte/icons/arrow-up-from-line';
 	import ChevronDown from '@lucide/svelte/icons/chevron-down';
 	import FolderGit2 from '@lucide/svelte/icons/folder-git-2';
+	import FolderTree from '@lucide/svelte/icons/folder-tree';
 	import GitBranchPlus from '@lucide/svelte/icons/git-branch-plus';
 	import Layers from '@lucide/svelte/icons/layers';
 	import Redo2 from '@lucide/svelte/icons/redo-2';
@@ -14,6 +15,7 @@
 	import { createWorkspace, REGISTRY } from '#lib/registry/api.ts';
 	import type { Repo, Workspace } from '#lib/registry/types.ts';
 	import type { Line } from '#lib/repo/types.ts';
+	import type { Worktree } from '#lib/repo/worktrees.ts';
 	import LineBadge from './LineBadge.svelte';
 	import Switcher from './Switcher.svelte';
 	import TitleBar from './TitleBar.svelte';
@@ -23,12 +25,16 @@
 		workspace: Workspace;
 		/** The open repository; without one the toolbar only switches workspace and repository. */
 		repo?: Repo;
+		/** The open repository's worktrees; the switcher only shows when there is a choice. */
+		worktrees?: Worktree[];
+		/** The worktree the repository is shown through. */
+		worktree?: Worktree;
 		/** The checked-out line of the open repository. */
 		line?: Line;
 		ahead?: number;
 	}
 
-	let { workspaces, workspace, repo, line, ahead = 0 }: Props = $props();
+	let { workspaces, workspace, repo, worktrees = [], worktree, line, ahead = 0 }: Props = $props();
 
 	let newName = $state('');
 
@@ -106,6 +112,35 @@
 			</li>
 		</ul>
 	</Switcher>
+	{#if repo && worktree && worktrees.length > 1}
+		<span class="text-base-content/40" aria-hidden="true">/</span>
+		<Switcher>
+			{#snippet label()}
+				<FolderTree class="size-4" aria-hidden="true" /><span class="sr-only">Worktree:</span><span
+					class="max-w-40 truncate">{worktree.name}</span
+				>
+			{/snippet}
+			<ul class="menu w-full p-1">
+				<li class="menu-title caps">Worktrees</li>
+				{#each worktrees as item (item.path)}
+					<li>
+						<a
+							href="{resolve('/workspaces/[workspace]/repos/[repo]/history', {
+								workspace: workspace.id,
+								repo: repo.id
+							})}?worktree={encodeURIComponent(item.path)}"
+							class={[item.path === worktree.path && 'menu-active']}
+							aria-current={item.path === worktree.path ? 'true' : undefined}
+							><span class="truncate">{item.name}</span><span
+								class="ml-auto max-w-28 truncate font-mono text-xs opacity-60"
+								>{item.branch ?? 'detached'}</span
+							></a
+						>
+					</li>
+				{/each}
+			</ul>
+		</Switcher>
+	{/if}
 	{#if repo && line}
 		<span class="text-base-content/40" aria-hidden="true">/</span>
 		<button type="button" class="btn btn-ghost font-semibold btn-sm"
