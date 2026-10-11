@@ -124,6 +124,15 @@ pub fn git_dirs(path: &Path) -> Result<(PathBuf, PathBuf), git2::Error> {
     Ok((repo.path().to_owned(), repo.commondir().to_owned()))
 }
 
+/// The message a folder that is not a git repository gets, instead of
+/// libgit2's own wording.
+pub fn open_error(error: git2::Error) -> String {
+    match error.code() {
+        ErrorCode::NotFound => "This folder is not a git repository.".to_owned(),
+        _ => error.message().to_owned(),
+    }
+}
+
 /// Reads the refs of the repository at `path`.
 pub fn refs(path: &Path) -> Result<Refs, git2::Error> {
     let mut repo = Repository::open(path)?;
@@ -832,10 +841,7 @@ pub async fn open_history<R: tauri::Runtime>(
             .await
             .map_err(|e| e.to_string())?
     }
-    .map_err(|e| match e.code() {
-        ErrorCode::NotFound => "This folder is not a git repository.".to_owned(),
-        _ => e.message().to_owned(),
-    })?;
+    .map_err(open_error)?;
     index::note_heads(
         &entry,
         read.head.iter().copied().collect::<Vec<_>>().as_slice(),

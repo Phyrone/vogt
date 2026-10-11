@@ -17,6 +17,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build.workspace = true
 
+[dev-dependencies]
+# the command tests run the app commands against tauri's mock app
+tauri = { workspace = true, features = ["test"] }
+
 [dependencies]
 git2.workspace = true
 notify.workspace = true

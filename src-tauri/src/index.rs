@@ -135,7 +135,7 @@ pub async fn ensure<R: tauri::Runtime>(
 /// FETCH_HEAD and the linked worktrees' HEADs. Objects are not watched; a
 /// fetch or commit always moves a ref too.
 fn watch(repo: &Arc<Repo>) -> Result<notify::RecommendedWatcher, String> {
-    let (gitdir, commondir) = history::git_dirs(&repo.path).map_err(|e| e.to_string())?;
+    let (gitdir, commondir) = history::git_dirs(&repo.path).map_err(history::open_error)?;
     let repo = repo.clone();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         if event.is_ok() {
@@ -475,14 +475,19 @@ pub async fn sync_repositories<R: tauri::Runtime>(
         stop(&repo).await;
     }
     for registered in &list {
-        ensure(
+        // one broken entry must not keep the others out of the app; its own
+        // page reports the failure through `open_history`
+        if let Err(failure) = ensure(
             &app,
             &repos,
             &registered.workspace,
             &registered.id,
             &registered.path,
         )
-        .await?;
+        .await
+        {
+            eprintln!("vogt: watching {} failed: {failure}", registered.id);
+        }
     }
     Ok(())
 }
@@ -521,6 +526,7 @@ mod tests {
     use super::*;
     use crate::{cache, history};
     use std::sync::atomic::AtomicUsize;
+    use tauri::Manager;
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("vogt-walk-{name}-{}", std::process::id()));
@@ -570,6 +576,96 @@ mod tests {
         let pool = Pool::<Sqlite>::connect("sqlite::memory:").await.unwrap();
         cache::prepare(&pool).await.unwrap();
         pool
+    }
+
+    /// A mock app whose caches live under `root`, so a test never writes into
+    /// the user's real cache directory.
+    fn app_with_cache(root: &Path) -> tauri::App<tauri::test::MockRuntime> {
+        use tauri::utils::config::{AppDirectoriesOverride, AppDirectoryOverrides};
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().app.app_directories_override =
+            Some(AppDirectoriesOverride::Directories(AppDirectoryOverrides {
+                cache: Some(root.to_owned()),
+                ..Default::default()
+            }));
+        tauri::test::mock_builder()
+            .manage(Repos::default())
+            .build(context)
+            .unwrap()
+    }
+
+    #[test]
+    fn the_commands_sync_a_broken_path_and_forget_a_repository() {
+        tauri::async_runtime::block_on(async {
+            let (dir, _repo, _refs) = repository("commands", 3);
+            let root = scratch("commands-cache");
+            std::fs::create_dir_all(&root).unwrap();
+            let missing = root.join("not-a-repository");
+            let app = app_with_cache(&root);
+
+            let list = vec![
+                Registered {
+                    id: "broken".into(),
+                    workspace: "ws".into(),
+                    path: missing.clone(),
+                },
+                Registered {
+                    id: "real".into(),
+                    workspace: "ws".into(),
+                    path: dir.clone(),
+                },
+            ];
+            // a broken entry must not stop the ones after it
+            sync_repositories(app.handle().clone(), app.state::<Repos>(), list)
+                .await
+                .unwrap();
+
+            // opening the broken one reports the folder, not what libgit2 said
+            let failure = crate::history::open_history(
+                app.handle().clone(),
+                app.state::<Repos>(),
+                "ws".into(),
+                "broken".into(),
+                missing,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(failure, "This folder is not a git repository.");
+
+            // the real one is watched, indexed and laid out
+            let repos = app.state::<Repos>();
+            let real = repos.get("real").expect("the real repository is watched");
+            for _ in 0..200 {
+                if cache::progress(&real.cache.pool).await.unwrap().complete {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            let progress = cache::progress(&real.cache.pool).await.unwrap();
+            assert_eq!(
+                (progress.indexed, progress.laid, progress.complete),
+                (3, 3, true)
+            );
+
+            // forgetting it takes its cache file and write-ahead siblings along
+            let file = real.cache.file.clone();
+            assert!(file.exists());
+            let removed = forget_repo(
+                app.handle().clone(),
+                app.state::<Repos>(),
+                "ws".into(),
+                "real".into(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(removed, file.to_string_lossy());
+            assert!(!file.exists());
+            assert!(!file.with_extension("db-wal").exists());
+            assert!(!file.with_extension("db-shm").exists());
+
+            std::fs::remove_dir_all(dir).unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        });
     }
 
     #[test]
