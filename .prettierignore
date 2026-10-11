@@ -1,0 +1,22 @@
+# Package Managers
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+bun.lock
+bun.lockb
+
+# Miscellaneous
+/static/
+/src-tauri/
+# Agent tooling installed and updated by the skills CLI and sv
+/.agents/
+/.claude/skills/
+/.cursor/
+/.gemini/
+/.github/agents/
+/.github/skills/
+/.hermes/
+/skills-lock.json
+
+# Generated from the opencode server's OpenAPI description
+/.opencode/opencode.schema.json
