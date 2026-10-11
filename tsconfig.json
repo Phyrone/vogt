@@ -5,5 +5,5 @@
 		"strict": true,
 		"types": ["$app/types", "node"]
 	},
-	"include": ["src", "vite.config.js", "playwright.config.ts"]
+	"include": ["src", "vite.config.js", "playwright.config.ts", "drizzle.config.ts"]
 }

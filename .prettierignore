@@ -22,3 +22,4 @@ bun.lockb
 
 # Generated from the opencode server's OpenAPI description
 /.opencode/opencode.schema.json
+/drizzle/

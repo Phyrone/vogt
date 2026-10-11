@@ -6,18 +6,19 @@ Guidance for AI agents working in this repository, whichever agent is running. `
 
 VOGT (Version & Operations GUI Tool) is a desktop app: a SvelteKit frontend in `src/` inside a Tauri 2 shell in `src-tauri/`.
 
-The app shell exists: routes, a title bar with workspace and repository switchers, and a registry of workspaces and repositories in Rust. **Repository contents are still synthetic** — every repository shows `src/lib/repo/mock.ts` through `RepoSession`, and no git command exists yet. `src/lib/vitest-examples/` is template leftover and sets no convention.
+The app shell exists: routes, a title bar with workspace and repository switchers, and a registry of workspaces and repositories kept in SQLite. **Repository contents are still synthetic** — every repository shows `src/lib/repo/mock.ts` through `RepoSession`, and no git command exists yet. `src/lib/vitest-examples/` is template leftover and sets no convention.
 
 ## Architecture
 
 - **The frontend is a pure SPA.** SSR and prerendering are off and `adapter-static` builds to `build/`, which Tauri bundles. There is no Node server at runtime, so server-only SvelteKit files (`+page.server.ts`, `+layout.server.ts`, `+server.ts`, form actions) never run.
-- **Everything that needs the system lives in Rust** as a Tauri command in `src-tauri/src/`, called from the frontend with `invoke` from `@tauri-apps/api/core`.
+- **Everything that needs the system lives in Rust** as a Tauri command in `src-tauri/src/`, called from the frontend with `invoke` from `@tauri-apps/api/core`. The one exception is the database.
+- **The database is SQLite, queried from the frontend** with Drizzle through `tauri-plugin-sql`: the schema is [src/lib/db/schema.ts](src/lib/db/schema.ts), `db` comes from [src/lib/db/index.ts](src/lib/db/index.ts), and `src/hooks.client.ts` opens it before the first load runs. After a schema change run `pnpm db:generate --name <what>`; the `sql_migrations!` macro in `crates/vogt-macros` compiles every file in `drizzle/` into the app, and the Rust side applies the new ones on the next start. Never edit a migration that has shipped. `drizzle.config.ts` points the other drizzle-kit commands at the app's own database file.
 - A new command works only once it is listed in `tauri::generate_handler![...]` in [src-tauri/src/lib.rs](src-tauri/src/lib.rs).
 - A plugin or core API works only once its permission is granted in [src-tauri/capabilities/default.json](src-tauri/capabilities/default.json); without it the call is rejected at runtime, not at build time.
 - Frontend code is Svelte 5 with runes and TypeScript in strict mode.
-- **Routes carry ids, never paths or names:** `/workspaces/[workspace]` lists a workspace's repositories and `/workspaces/[workspace]/repos/[repo]/<view>` is one view of a repository (`history` so far). The ids are issued by the Rust registry in [src-tauri/src/registry.rs](src-tauri/src/registry.rs), which keeps them in memory only; persistence is to be added behind the same commands.
+- **Routes carry ids, never paths or names:** `/workspaces/[workspace]` lists a workspace's repositories and `/workspaces/[workspace]/repos/[repo]/<view>` is one view of a repository (`history` so far). The ids are the primary keys of the `workspace` and `repo` tables.
 - **Layouts load, pages render:** the root `+layout.ts` loads the workspaces, each `[param]` layout resolves its id from the parent data or fails with a 404, and the repository layout creates the `RepoSession` its pages share. Build links with `resolve` from `$app/paths`.
-- **The frontend reaches the registry only through [src/lib/registry/api.ts](src/lib/registry/api.ts)**, which answers from `mock.ts` outside the Tauri shell so every route also renders in a plain browser and in the end-to-end tests. After a change, `invalidate(REGISTRY)`.
+- **The frontend reaches the registry only through [src/lib/registry/api.ts](src/lib/registry/api.ts)**, which answers from the database in the Tauri shell and from `mock.ts` outside it, so every route also renders in a plain browser and in the end-to-end tests. After a change, `invalidate(REGISTRY)`.
 - **Every page draws its own title bar** — `Toolbar`, or the bare `TitleBar` — because the window has no native one.
 
 ## Commands

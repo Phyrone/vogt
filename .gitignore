@@ -272,3 +272,5 @@ blob-report
 ### Impeccable ###
 # design sketches, screenshots and briefs written by the impeccable skill
 /.impeccable/
+# SQLite
+*.db
