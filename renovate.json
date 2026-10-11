@@ -6,8 +6,14 @@
 	"semanticCommits": "enabled",
 	"semanticCommitType": "⬆️ build",
 	"semanticCommitScope": "deps",
-	"automerge": true,
+	"automerge": false,
+	"minimumReleaseAge": "7 days",
 	"packageRules": [
+		{
+			"description": "Merge only updates that cannot change behaviour on their own; a major needs a person",
+			"matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+			"automerge": true
+		},
 		{
 			"description": "A rollback is a downgrade, not an upgrade",
 			"matchUpdateTypes": ["rollback"],
