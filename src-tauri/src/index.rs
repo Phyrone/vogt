@@ -263,7 +263,7 @@ pub async fn walk(
         .await
         .map_err(|e| e.to_string())?;
     let unchanged = previous.as_deref() == Some(&fingerprint);
-    if unchanged && progress.complete && progress.indexed == progress.laid {
+    if unchanged && progress.complete {
         return Ok(());
     }
 
@@ -379,17 +379,10 @@ pub async fn walk(
         }
     }
 
-    // the walk is through: mark it and lay out whatever changed since
-    cache::set_meta(
-        pool,
-        &[("complete", "1".into()), ("fingerprint", fingerprint)],
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    if processed > 0
-        || !unchanged
-        || laid != cache::progress(pool).await.map_err(|e| e.to_string())?.laid
-    {
+    // the walk is through: lay out whatever changed since, then mark the walk
+    // done. Storing the fingerprint only after the layout means a quit in
+    // between leaves it unchanged, and the next start lays the view out again.
+    if processed > 0 || !unchanged {
         laid = history::materialize(pool, refs, version + 1)
             .await
             .map_err(|e| e.to_string())?
@@ -399,6 +392,12 @@ pub async fn walk(
             .await
             .map_err(|e| e.to_string())?;
     }
+    cache::set_meta(
+        pool,
+        &[("complete", "1".into()), ("fingerprint", fingerprint)],
+    )
+    .await
+    .map_err(|e| e.to_string())?;
     report(version, indexed, laid, true);
     Ok(())
 }
@@ -841,6 +840,68 @@ mod tests {
                     .await
                     .unwrap();
             assert!(hashes.contains(&orphan.to_string()));
+            std::fs::remove_dir_all(dir).unwrap();
+        });
+    }
+
+    #[test]
+    fn a_deleted_branch_leaves_the_view_and_an_unchanged_walk_stays_quiet() {
+        tauri::async_runtime::block_on(async {
+            let (dir, repo, _refs) = repository("relayout", 1);
+            let a = repo.head().unwrap().target().unwrap();
+            let b = detached_commit(&repo, "gone work", &[a]);
+            repo.branch("gone", &repo.find_commit(b).unwrap(), true)
+                .unwrap();
+
+            let pool = pool().await;
+            walk(
+                &pool,
+                &dir,
+                &history::refs(&dir).unwrap(),
+                2,
+                &|_, _, _, _| {},
+                &|| false,
+            )
+            .await
+            .unwrap();
+            assert_eq!(cache::progress(&pool).await.unwrap().laid, 2);
+
+            // the branch is gone, so its commit leaves the view
+            repo.find_branch("gone", git2::BranchType::Local)
+                .unwrap()
+                .delete()
+                .unwrap();
+            let refs = history::refs(&dir).unwrap();
+            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+                .await
+                .unwrap();
+            let progress = cache::progress(&pool).await.unwrap();
+            assert_eq!(
+                (progress.indexed, progress.laid, progress.complete),
+                (2, 1, true)
+            );
+            assert_eq!(
+                cache::meta(&pool, "fingerprint").await.unwrap().as_deref(),
+                Some(refs.fingerprint().as_str())
+            );
+
+            // nothing changed: no report, although the cache holds one more
+            // commit than the view shows
+            let reports = AtomicUsize::new(0);
+            walk(
+                &pool,
+                &dir,
+                &refs,
+                2,
+                &|_, _, _, _| {
+                    reports.fetch_add(1, Ordering::SeqCst);
+                },
+                &|| false,
+            )
+            .await
+            .unwrap();
+            assert_eq!(reports.load(Ordering::SeqCst), 0);
+
             std::fs::remove_dir_all(dir).unwrap();
         });
     }
