@@ -1,3 +1,4 @@
+import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
 
@@ -17,6 +18,7 @@ const ci = Boolean(process.env.CI);
 // https://vite.dev/config/
 export default defineConfig({
 	plugins: [
+		tailwindcss(),
 		sveltekit({
 			preprocess: vitePreprocess(),
 			adapter: adapter({ fallback: 'index.html' })
