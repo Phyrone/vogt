@@ -268,3 +268,7 @@ vite.config.ts.timestamp-*
 test-results
 playwright-report
 blob-report
+
+### Impeccable ###
+# design sketches, screenshots and briefs written by the impeccable skill
+/.impeccable/
