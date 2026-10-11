@@ -19,7 +19,7 @@
 //! `pnpm db:repo:prepare`), so a schema change that this module misses does not
 //! compile.
 
-use std::{collections::HashSet, path::PathBuf, time::Duration};
+use std::{collections::HashMap, collections::HashSet, path::PathBuf, time::Duration};
 
 use serde::Serialize;
 use sqlx::{
@@ -280,6 +280,30 @@ pub async fn known(pool: &Pool<Sqlite>, hashes: &[String]) -> Result<HashSet<Str
         known.extend(rows);
     }
     Ok(known)
+}
+
+/// The parents of `hashes`, as they were stored when the commits were read.
+pub async fn parents(
+    pool: &Pool<Sqlite>,
+    hashes: &[String],
+) -> Result<HashMap<String, Vec<String>>, sqlx::Error> {
+    let mut parents = HashMap::new();
+    for chunk in hashes.chunks(5_000) {
+        let json = serde_json::to_string(chunk).unwrap_or_default();
+        let rows = sqlx::query!(
+            "SELECT hash, parents FROM commits WHERE hash IN (SELECT value FROM json_each(?))",
+            json
+        )
+        .fetch_all(pool)
+        .await?;
+        parents.extend(rows.into_iter().map(|row| {
+            (
+                row.hash,
+                serde_json::from_str(&row.parents).unwrap_or_default(),
+            )
+        }));
+    }
+    Ok(parents)
 }
 
 /// Marks `popped` as expanded — their parents have been read — and remembers

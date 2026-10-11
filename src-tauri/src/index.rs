@@ -326,14 +326,15 @@ pub async fn walk(
             break;
         }
 
-        // the parents of the popped commits are what this turn reads
-        let ids: Vec<Oid> = popped.iter().filter_map(|hash| hash.parse().ok()).collect();
-        let read = read_facts(path, ids).await?;
+        // the parents of the popped commits are what this turn reads; they
+        // were stored when the commits were enqueued, so git is only asked
+        // for the parents the cache does not hold yet
+        let stored = cache::parents(pool, &popped)
+            .await
+            .map_err(|e| e.to_string())?;
         let mut wanted: HashSet<String> = HashSet::new();
-        for fact in &read {
-            for parent in &fact.parents {
-                wanted.insert(parent.clone());
-            }
+        for parents in stored.values() {
+            wanted.extend(parents.iter().cloned());
         }
         let wanted: Vec<String> = wanted.into_iter().collect();
         let known = cache::known(pool, &wanted)
