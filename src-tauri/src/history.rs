@@ -391,7 +391,9 @@ pub async fn materialize(
             merged: false,
         });
     }
-    let _head_line = match (&refs.head_branch, refs.head) {
+    // the arms are for their side effects: the unborn branch's line and the
+    // detached HEAD's claim
+    match (&refs.head_branch, refs.head) {
         (Some(branch), _) => {
             // a branch without a commit is not among the branches yet
             if !lines.iter().any(|line| &line.id == branch) {
@@ -402,31 +404,24 @@ pub async fn materialize(
                     merged: false,
                 });
             }
-            branch.clone()
         }
         // detached: HEAD is on whichever line holds its commit, or on one of its own
         (None, Some(head)) => {
             let line = lines.len() as u32;
             claim(&mut line_of, &reachable, &nodes, &index, head, line);
-            match index.get(&head).map(|i| line_of[*i as usize]) {
-                Some(line) if line != u32::MAX && (line as usize) < lines.len() => {
-                    lines[line as usize].id.clone()
-                }
-                Some(line) if line != u32::MAX => {
+            if let Some(line) = index.get(&head).map(|i| line_of[*i as usize]) {
+                if line != u32::MAX && (line as usize) >= lines.len() {
                     lines.push(Line {
                         id: "HEAD".into(),
                         name: "detached HEAD".into(),
                         remote: false,
                         merged: false,
                     });
-                    "HEAD".into()
                 }
-                // not indexed yet; the trunk stands in until it is
-                _ => refs.trunk.clone(),
             }
         }
-        (None, None) => refs.trunk.clone(),
-    };
+        (None, None) => {}
+    }
 
     // children come before their parents, so a merge is seen before what it merged
     let mut merged_by: HashMap<u32, u32> = HashMap::new();

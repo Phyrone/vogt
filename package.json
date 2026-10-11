@@ -13,8 +13,6 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"tauri": "tauri",
-		"ios": "tauri ios",
-		"android": "tauri android",
 		"sv": "sv",
 		"skills": "skills",
 		"lint": "prettier --check . && eslint .",
@@ -27,9 +25,7 @@
 		"test:e2e": "playwright install chromium && playwright test",
 		"test:e2e:ui": "playwright install chromium && playwright test --ui",
 		"db": "drizzle-kit",
-		"db:push": "drizzle-kit push",
 		"db:generate": "drizzle-kit generate",
-		"db:migrate": "drizzle-kit migrate",
 		"db:studio": "drizzle-kit studio",
 		"db:repo:generate": "drizzle-kit generate --config=drizzle.repo.config.ts",
 		"db:repo:prepare": "node scripts/repo-schema.mjs && SQLX_OFFLINE=false DATABASE_URL=sqlite:src-tauri/target/repo-schema.db cargo sqlx prepare --workspace -- --all-targets"
@@ -87,7 +83,6 @@
 		"vitest-browser-svelte": "^3.1.0"
 	},
 	"imports": {
-		"#lib": "./src/lib/index.js",
 		"#lib/*": "./src/lib/*"
 	}
 }

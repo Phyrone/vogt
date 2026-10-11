@@ -48,7 +48,7 @@ The first milestone is the point where VOGT is usable for daily work: open a rep
 
 - **Stack:** SvelteKit SPA (Svelte 5 runes, strict TypeScript) inside a Tauri 2 shell. Everything that touches the system is a Rust Tauri command; there is no Node server at runtime. Tailwind CSS 4 and daisyUI 5 are installed.
 - **Localisation:** an inlang project (`project.inlang/`, `messages/`) is set up; no messages exist yet.
-- **Current state:** everything under `src/` and `src-tauri/src/` is still the create-tauri-app template and sets no convention. No VOGT feature is implemented.
+- **Current state:** see **Project status** in [AGENTS.md](AGENTS.md).
 - **Sequence:** git first; jj after git works; ADR tooling later.
 
 Open decisions:
