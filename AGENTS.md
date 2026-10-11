@@ -6,7 +6,7 @@ Guidance for AI agents working in this repository, whichever agent is running. `
 
 VOGT (Version & Operations GUI Tool) is a desktop app: a SvelteKit frontend in `src/` inside a Tauri 2 shell in `src-tauri/`.
 
-The app shell exists: routes, a title bar with workspace and repository switchers, and a registry of workspaces and repositories kept in SQLite. **Repository contents are still synthetic** — every repository shows `src/lib/repo/mock.ts` through `RepoSession`, and the only git code so far lists worktrees, with `git2` in [src-tauri/src/git.rs](src-tauri/src/git.rs). `src/lib/vitest-examples/` is template leftover and sets no convention.
+The app shell exists: routes, a title bar with workspace and repository switchers, and a registry of workspaces and repositories kept in SQLite. **History is real, the working tree is not:** [src-tauri/src/history.rs](src-tauri/src/history.rs) reads commits, branches, tags and stashes with `git2` and assigns every commit to a line; [src/lib/repo/history.ts](src/lib/repo/history.ts) turns that into the `Repository` the interface draws. Working changes are not read yet, and the commit composer, pull, push and the commit actions do nothing to a real repository. Outside the Tauri shell every repository shows `src/lib/repo/mock.ts`. `src/lib/vitest-examples/` is template leftover and sets no convention.
 
 ## Architecture
 

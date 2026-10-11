@@ -45,19 +45,19 @@ export interface Commit {
 	parents: string[];
 	refs?: Ref[];
 	pushed: boolean;
-	files: FileChange[];
+	/** Absent while they have not been read; see `commitFiles`. */
+	files?: FileChange[];
 	/** Uncommitted work shown as the next station on the checked-out line. */
 	pending?: boolean;
 }
 
 export interface Repository {
-	name: string;
 	user: string;
 	/** Id of the line history is laid out around. */
 	trunk: string;
 	/** Id of the checked-out line. */
 	headLine: string;
-	/** Hash the checked-out line points at. */
+	/** Hash the checked-out line points at; empty before the first commit. */
 	head: string;
 	lines: Record<string, Line>;
 	/** Newest first. */

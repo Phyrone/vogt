@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import CommitComposer from '#lib/components/CommitComposer.svelte';
 	import CommitDetail from '#lib/components/CommitDetail.svelte';
 	import History from '#lib/components/History.svelte';
@@ -10,7 +11,7 @@
 	const session = $derived(data.session);
 	const { lines, headLine } = $derived(session);
 
-	let selected = $state(WORKING);
+	let selected = $state(untrack(() => (session.changes.length ? WORKING : session.head)));
 	let focusLine = $state<string | null>(null);
 
 	const commit = $derived(session.commits.find((c) => c.hash === selected));
@@ -45,7 +46,12 @@
 		aria-label={commit ? 'Commit' : 'Working changes'}
 	>
 		{#if commit}
-			<CommitDetail {commit} line={lines[commit.line]} isHead={commit.hash === session.head} />
+			<CommitDetail
+				{commit}
+				files={session.files(commit)}
+				line={lines[commit.line]}
+				isHead={commit.hash === session.head}
+			/>
 		{:else if session.changes.length}
 			<CommitComposer
 				bind:changes={session.changes}

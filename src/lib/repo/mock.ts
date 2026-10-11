@@ -1,8 +1,7 @@
 import type { Repository } from './types';
 
-/** Synthetic repository for building the interface before any Tauri command exists. */
+/** Synthetic repository shown outside the Tauri shell, where no git command can run. */
 export const repository: Repository = {
-	name: 'vogt',
 	user: 'Phyrone',
 	trunk: 'main',
 	headLine: 'graph',

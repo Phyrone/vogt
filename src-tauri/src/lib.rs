@@ -2,6 +2,7 @@ use tauri::App;
 use tauri_plugin_sql::Migration;
 
 mod git;
+mod history;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -19,7 +20,9 @@ pub fn run() {
         .setup(init_app)
         .invoke_handler(tauri::generate_handler![
             git::list_worktrees,
-            git::create_repository
+            git::create_repository,
+            history::read_history,
+            history::commit_files
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

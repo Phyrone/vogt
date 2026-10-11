@@ -16,7 +16,8 @@
 	let { rows, lines, trunk, head, selected = $bindable(), focusLine }: Props = $props();
 
 	const layout = $derived(layoutGraph(rows, trunk));
-	const graph = $derived(graphWidth(layout.lanes));
+	// never narrower than two lanes: the column's heading needs the room
+	const graph = $derived(graphWidth(Math.max(layout.lanes, 2)));
 
 	function onkeydown(event: KeyboardEvent & { currentTarget: HTMLElement }) {
 		const step = { ArrowDown: 1, j: 1, ArrowUp: -1, k: -1 }[event.key];
@@ -80,7 +81,7 @@
 							>
 							<span
 								class="hidden w-16 shrink-0 font-mono text-xs font-normal text-base-content/70 @2xl:block"
-								>{commit.pending ? '' : commit.hash}</span
+								>{commit.pending ? '' : commit.hash.slice(0, 7)}</span
 							>
 							<span
 								class="hidden w-20 shrink-0 text-right font-normal text-base-content/70 @lg:block"
