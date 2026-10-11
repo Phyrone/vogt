@@ -39,7 +39,6 @@
 		"@tauri-apps/plugin-opener": "^2.7.0",
 		"@tauri-apps/plugin-sql": "~2.5.0",
 		"@tauri-apps/plugin-store": "~2.5.0",
-		"@tauri-apps/plugin-stronghold": "~2.4.0",
 		"@tauri-apps/plugin-updater": "~2.13.2",
 		"runed": "^0.37.1",
 		"zod": "^4.6.5"

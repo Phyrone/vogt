@@ -34,7 +34,6 @@ tauri-plugin-opener.workspace = true
 tauri-plugin-sql.workspace = true
 tauri-plugin-store = "2"
 vogt-macros.workspace = true
-tauri-plugin-stronghold = "2"
 ts-rs.workspace = true
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

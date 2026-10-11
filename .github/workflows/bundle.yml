@@ -55,7 +55,7 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
           # Off until it has been tried: cross-compiled on the x64 runner, the
-          # way Tauri documents it, with libsodium and ring as the open questions.
+          # way Tauri documents it, with ring as the open question.
           # - name: Windows, ARM
           #   os: windows-latest
           #   target: aarch64-pc-windows-msvc
