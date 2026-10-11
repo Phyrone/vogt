@@ -32,7 +32,11 @@
     "sv": "^1.1.1",
     "svelte": "^5.57.2",
     "svelte-check": "^4.7.6",
-    "typescript": "~7.0.2",
+    "typescript": "~6.0.3",
     "vite": "^8.3.4"
+  },
+  "imports": {
+    "#lib": "./src/lib/index.js",
+    "#lib/*": "./src/lib/*"
   }
 }
