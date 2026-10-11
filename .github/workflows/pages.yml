@@ -3,6 +3,10 @@ name: Pages
 # Publishes the site at https://vogt.phyrone.de: the update manifests under
 # /updates/ so far, one per channel. Every shipped build reads them from
 # there, so that path must never move. The root is free for a landing page.
+#
+# Each channel is an app of its own and only gets its own builds: stable the
+# releases, beta the prereleases, and canary the build of main that
+# canary.yml keeps in the `canary` release.
 on:
   release:
     # a release that is withdrawn takes its channels back to the one before it
@@ -57,7 +61,7 @@ jobs:
             --jq '.[] | select(.draft | not) | {tag: .tag_name, prerelease, published_at}' |
             jq -s 'sort_by(.published_at) | reverse' > releases.json
 
-          # The channel follows the release published last, not the highest
+          # A channel follows its release published last, not the highest
           # version. A release without a manifest is passed over.
           manifest() { # channel, the jq filter for its releases
             for tag in $(jq -r ".[] | $2 | .tag" releases.json); do
@@ -69,8 +73,8 @@ jobs:
             echo "::warning::No published release carries a manifest for the $1 channel"
           }
           manifest stable 'select(.prerelease | not)'
-          # a full release lands on beta as well
-          manifest beta .
+          manifest beta 'select(.prerelease and .tag != "canary")'
+          manifest canary 'select(.tag == "canary")'
 
       - uses: actions/upload-pages-artifact@v5
         with:
