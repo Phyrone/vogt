@@ -17,6 +17,11 @@
 			"description": "Neither an upgrade nor a downgrade: the default emoji of the build type",
 			"matchUpdateTypes": ["pin", "pinDigest", "replacement", "lockFileMaintenance"],
 			"semanticCommitType": "📦️ build"
+		},
+		{
+			"description": "SvelteKit 3 and svelte-check need the compiler API that TypeScript 7 no longer ships; lift this once both support it",
+			"matchPackageNames": ["typescript"],
+			"allowedVersions": "<7"
 		}
 	]
 }
