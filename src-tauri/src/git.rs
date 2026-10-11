@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use git2::{ErrorCode, Repository};
+use git2::{ErrorCode, Repository, RepositoryInitOptions};
 use serde::Serialize;
 
 /// One checkout of a repository: the main one, or one added with `git worktree add`.
@@ -59,6 +59,33 @@ pub fn list_worktrees(path: PathBuf) -> Result<Vec<Worktree>, String> {
     worktrees(&path).map_err(|e| e.message().into())
 }
 
+/// Creates the directory `name` inside `parent` and starts a repository in it.
+/// An existing directory is only taken over while it is empty.
+fn create(parent: &Path, name: &str) -> Result<PathBuf, String> {
+    let name = name.trim();
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
+        return Err("Give the repository a name without slashes.".into());
+    }
+    let path = parent.join(name);
+    let taken = path.is_file() || path.read_dir().is_ok_and(|mut dir| dir.next().is_some());
+    if taken {
+        return Err(format!(
+            "{} already exists and is not empty. Choose another name or location.",
+            path.display()
+        ));
+    }
+    std::fs::create_dir_all(&path)
+        .map_err(|e| format!("Could not create {}: {e}", path.display()))?;
+    Repository::init_opts(&path, RepositoryInitOptions::new().initial_head("main"))
+        .map_err(|e| e.message().to_string())?;
+    Ok(path)
+}
+
+#[tauri::command(async)]
+pub fn create_repository(parent: PathBuf, name: String) -> Result<PathBuf, String> {
+    create(&parent, &name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,6 +110,24 @@ mod tests {
     fn a_directory_that_is_no_repository_has_no_worktrees() {
         let dir = scratch("plain");
         assert!(worktrees(&dir).unwrap().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_new_repository_starts_on_main_in_its_own_directory() {
+        let dir = scratch("create");
+
+        let path = create(&dir, " fresh ").unwrap();
+
+        assert_eq!(path, dir.join("fresh"));
+        let repo = Repository::open(&path).unwrap();
+        let head = repo.find_reference("HEAD").unwrap();
+        assert_eq!(head.symbolic_target(), Some("refs/heads/main"));
+        // it now holds a .git directory, so it is no longer free to take
+        assert!(create(&dir, "fresh").is_err());
+        for name in ["", "..", "a/b"] {
+            assert!(create(&dir, name).is_err(), "{name:?} is not a name");
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -17,7 +17,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(init_app)
-        .invoke_handler(tauri::generate_handler![git::list_worktrees])
+        .invoke_handler(tauri::generate_handler![
+            git::list_worktrees,
+            git::create_repository
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
