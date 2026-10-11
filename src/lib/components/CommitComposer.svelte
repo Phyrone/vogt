@@ -22,15 +22,19 @@
 	];
 	const SUBJECT_LIMIT = 50;
 
+	// how this repository writes commit headers; will come from the per-repository settings
+	const style = 'gitmoji' as 'plain' | 'conventional' | 'gitmoji';
 	let type = $state('feat');
 	let scope = $state('');
 	let subject = $state('');
 	let body = $state('');
 
 	const staged = $derived(changes.filter((c) => c.staged).length);
-	const header = $derived(
-		`${types.find((t) => t.name === type)?.emoji} ${type}${scope && `(${scope})`}: ${subject.trim()}`
-	);
+	const header = $derived.by(() => {
+		if (style === 'plain') return subject.trim();
+		const emoji = style === 'gitmoji' ? `${types.find((t) => t.name === type)?.emoji} ` : '';
+		return `${emoji}${type}${scope.trim() && `(${scope.trim()})`}: ${subject.trim()}`;
+	});
 	const ready = $derived(staged > 0 && subject.trim().length > 0);
 
 	function stageAll() {
@@ -72,53 +76,57 @@
 			</li>
 		{/each}
 	</ul>
-
-	<fieldset class="mt-auto">
-		<legend class="mb-1.5 caps text-base-content/70">Type</legend>
-		<div class="flex flex-wrap gap-1.5">
-			{#each types as t (t.name)}
-				<input
-					type="radio"
-					class="btn btn-sm checked:[--btn-color:var(--color-neutral)] checked:[--btn-fg:var(--color-neutral-content)]"
-					name="type"
-					value={t.name}
-					aria-label="{t.emoji} {t.name}"
-					bind:group={type}
-				/>
-			{/each}
+	<div
+		class="mt-auto overflow-hidden rounded-field border border-base-content/20 bg-base-100 focus-within:border-base-content"
+	>
+		<div class="flex flex-wrap items-center gap-x-2 gap-y-1.5 px-3 pt-2.5">
+			{#if style !== 'plain'}
+				<span class="flex shrink-0 items-center font-mono text-xs">
+					<select
+						class="cursor-pointer rounded-selector bg-base-200 py-1 pr-1 pl-1.5 outline-offset-0"
+						aria-label="Type"
+						bind:value={type}
+					>
+						{#each types as t (t.name)}
+							<option value={t.name}>{style === 'gitmoji' ? `${t.emoji} ` : ''}{t.name}</option>
+						{/each}
+					</select>
+					<span class="pl-1 text-base-content/50" aria-hidden="true">(</span>
+					<input
+						type="text"
+						class="bg-transparent text-center outline-none placeholder:text-base-content/50"
+						list="commit-scopes"
+						style:width="{Math.max(scope.length, 5) + 3}ch"
+						placeholder="scope"
+						aria-label="Scope"
+						bind:value={scope}
+					/>
+					<span class="text-base-content/50" aria-hidden="true">):</span>
+					<datalist id="commit-scopes">
+						{#each scopes as s (s)}<option value={s}></option>{/each}
+					</datalist>
+				</span>
+			{/if}
+			<input
+				type="text"
+				class="min-w-32 flex-1 bg-transparent font-semibold outline-none"
+				placeholder="Summary of the change"
+				aria-label="Subject"
+				bind:value={subject}
+			/>
+			<span
+				class={[
+					'shrink-0 font-mono text-xs',
+					subject.length > SUBJECT_LIMIT ? 'text-error' : 'text-base-content/70'
+				]}>{subject.length}</span
+			>
 		</div>
-	</fieldset>
-	<fieldset class="mt-2">
-		<legend class="mb-1.5 caps text-base-content/70">Scope</legend>
-		<div class="flex flex-wrap gap-1.5">
-			{#each ['', ...scopes] as s (s)}
-				<input
-					type="radio"
-					class="btn btn-sm checked:[--btn-color:var(--color-neutral)] checked:[--btn-fg:var(--color-neutral-content)]"
-					name="scope"
-					value={s}
-					aria-label={s || 'none'}
-					bind:group={scope}
-				/>
-			{/each}
-		</div>
-	</fieldset>
-	<label class="mt-2 caps text-base-content/70" for="subject">Subject</label>
-	<label class="input w-full">
-		<input id="subject" type="text" placeholder="what this commit does" bind:value={subject} />
-		<span
-			class={[
-				'font-mono text-xs',
-				subject.length > SUBJECT_LIMIT ? 'text-error' : 'text-base-content/70'
-			]}>{subject.length} / {SUBJECT_LIMIT}</span
-		>
-	</label>
-	<p class="truncate font-mono text-xs text-base-content/70" title={header}>{header}</p>
-	<textarea
-		class="textarea h-20 w-full resize-none"
-		placeholder="Why this change was needed"
-		aria-label="Description"
-		bind:value={body}></textarea>
+		<textarea
+			class="block h-24 w-full resize-none bg-transparent px-3 py-2 outline-none"
+			placeholder="Why this change was needed"
+			aria-label="Description"
+			bind:value={body}></textarea>
+	</div>
 	<button
 		type="submit"
 		class="btn border-0 bg-(--line) signage text-base font-semibold text-(--line-content)"
