@@ -1,0 +1,133 @@
+name: Bundle
+
+# What every channel's build has in common: each platform's bundles, signed
+# for the updater and uploaded into the draft release the caller made.
+on:
+  workflow_call:
+    inputs:
+      release_id:
+        description: The draft release the bundles are uploaded into
+        type: string
+        required: true
+      tag:
+        description: The tag that release has or gets; the update manifest links to it
+        type: string
+        required: true
+      channel:
+        description: stable, beta or canary; the flavour of the app that is built
+        type: string
+        required: true
+      ref:
+        description: The commit to build; the one the caller runs on when empty
+        type: string
+        default: ''
+      version:
+        description: Replaces the declared version; a canary has one of its own
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # one bundle for Apple silicon and Intel; a Tauri target, not a Rust one
+          - name: macOS
+            os: macos-latest
+            target: universal-apple-darwin
+            rustup: aarch64-apple-darwin x86_64-apple-darwin
+          # an older Ubuntu, so the bundles also start where glibc is older
+          - name: Linux, x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - name: Linux, ARM
+            os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+          - name: Windows, x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          # Off until it has been tried: cross-compiled on the x64 runner, the
+          # way Tauri documents it, with libsodium and ring as the open questions.
+          # - name: Windows, ARM
+          #   os: windows-latest
+          #   target: aarch64-pc-windows-msvc
+          #   rustup: aarch64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      # found here in seconds instead of at the end of the build
+      - name: The updater can sign
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$(jq -r .plugins.updater.pubkey src-tauri/tauri.conf.json)" ]; then
+            echo "::error file=src-tauri/tauri.conf.json::plugins.updater.pubkey is empty"
+            exit 1
+          fi
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::The TAURI_SIGNING_PRIVATE_KEY secret is not set"
+            exit 1
+          fi
+
+      # The app takes its version from tauri.conf.json and the frontend from
+      # package.json; Cargo.toml is left alone, nothing shown or compared reads it.
+      - name: Set the version
+        if: inputs.version
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          for file in package.json src-tauri/tauri.conf.json; do
+            jq --arg version "$VERSION" '.version = $version' "$file" > "$file.new"
+            mv "$file.new" "$file"
+          done
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install Tauri system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
+      - name: Install the targets the runner does not build for by itself
+        if: matrix.rustup
+        run: rustup target add ${{ matrix.rustup }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # builds the frontend itself, through beforeBuildCommand
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ inputs.release_id }}
+          # without the tag the manifest links to releases/latest, which a prerelease never is
+          tagName: ${{ inputs.tag }}
+          # The release config turns the updater artifacts on, which need the
+          # signing key. A flavour's config gives it a name and an identifier of
+          # its own, so it installs beside the others.
+          args: >-
+            --target ${{ matrix.target }}
+            --config src-tauri/tauri.release.conf.json
+            ${{ inputs.channel != 'stable' && format('--config src-tauri/tauri.{0}.conf.json', inputs.channel) || '' }}
