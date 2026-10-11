@@ -2,9 +2,6 @@
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 	import TitleBar from '#lib/components/TitleBar.svelte';
 	import {
-		CHANNELS,
-		channel,
-		channelChoice,
 		LANGUAGES,
 		locale,
 		localeChoice,
@@ -31,7 +28,7 @@
 
 	let storageNotice = $state('');
 	let updateNotice = $state('');
-	/** The newer version the last check found on the chosen channel. */
+	/** The newer version the last check found. */
 	let available = $state<string | null>(null);
 	let installing = $state(false);
 
@@ -57,7 +54,7 @@
 		updateNotice = '';
 		available = null;
 		try {
-			available = await checkForUpdates(channel.current);
+			available = await checkForUpdates();
 			if (!available) updateNotice = 'VOGT is up to date.';
 		} catch (reason) {
 			updateNotice = String(reason);
@@ -69,18 +66,11 @@
 		installing = true;
 		try {
 			// the app restarts into the new version, so this only returns when nothing was installed
-			await installUpdate(channel.current);
+			await installUpdate();
 		} catch (reason) {
 			updateNotice = String(reason);
 		}
 		installing = false;
-	}
-
-	function switchChannel(value: string): void {
-		channel.current = channelChoice.parse(value);
-		// what the other channel offered says nothing about this one
-		available = null;
-		updateNotice = '';
 	}
 
 	function follow(event: MouseEvent, url: string): void {
@@ -231,26 +221,8 @@
 				</div>
 				<div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 py-4">
 					<div class="min-w-0">
-						<p class="font-semibold">Update channel</p>
-						<p class="text-base-content/70">
-							Beta gets a release before it is declared stable, rough edges included.
-						</p>
-					</div>
-					<select
-						class="select w-44 select-sm"
-						aria-label="Update channel"
-						value={channel.current}
-						onchange={(event) => switchChannel(event.currentTarget.value)}
-					>
-						{#each CHANNELS as option (option.id)}
-							<option value={option.id}>{option.name}</option>
-						{/each}
-					</select>
-				</div>
-				<div class="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 py-4">
-					<div class="min-w-0">
 						<p class="font-semibold">Updates</p>
-						<p class="text-base-content/70">Checks the channel for a newer version.</p>
+						<p class="text-base-content/70">Checks for a newer version of this build.</p>
 					</div>
 					<button type="button" class="btn btn-sm" onclick={check}>Check for updates</button>
 				</div>

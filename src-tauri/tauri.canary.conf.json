@@ -1,0 +1,6 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "vogt-canary",
+  "mainBinaryName": "vogt-canary",
+  "identifier": "de.phyrone.vogt.canary"
+}

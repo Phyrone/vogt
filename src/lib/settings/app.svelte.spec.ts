@@ -9,21 +9,17 @@ describe('app settings', () => {
 	});
 
 	test('starts on the defaults when storage is empty', async () => {
-		const { channel, locale, SYSTEM, theme } = await import('./app.svelte.ts');
+		const { locale, SYSTEM, theme } = await import('./app.svelte.ts');
 		expect(theme.current).toBe(SYSTEM);
 		expect(locale.current).toBe('en');
-		// a prerelease build follows the channel it was installed from
-		expect(channel.current).toBe(__APP_VERSION__.includes('-') ? 'beta' : 'stable');
 	});
 
-	test('reads the stored theme, language and update channel', async () => {
+	test('reads the stored theme and language', async () => {
 		localStorage.setItem('vogt:theme', 'nord');
 		localStorage.setItem('vogt:locale', 'de');
-		localStorage.setItem('vogt:update-channel', 'beta');
-		const { channel, locale, theme } = await import('./app.svelte.ts');
+		const { locale, theme } = await import('./app.svelte.ts');
 		expect(theme.current).toBe('nord');
 		expect(locale.current).toBe('de');
-		expect(channel.current).toBe('beta');
 	});
 
 	test('falls back when storage holds something unknown', async () => {
