@@ -94,6 +94,7 @@ The interface owns no colours. Every colour is a daisyUI theme role, so any dais
 
 ## Layout
 
+- The toolbar is also the title bar. On macOS the system's traffic lights are overlaid on its left and the toolbar leaves room for them; on Windows and Linux the window has no decorations and `WindowControls.svelte` draws minimize, maximize and close at its right end. Empty toolbar space drags the window.
 - Toolbar on top, then three panes: branch sidebar, history, and a context pane that shows the commit composer for working changes or the detail of the selected commit.
 - The history table and the graph share one grid: rows are 36px and lanes are 36px apart, which is what makes every bend 45°. Change both together (`PITCH` in `src/lib/graph/layout.ts`).
 - Narrow windows (the minimum is 800×560): the sidebar collapses to a rail of line badges below 1024px, and the history table drops its author, hash and when columns by container width.
