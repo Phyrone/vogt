@@ -67,8 +67,7 @@
 				{changed.length === 1 ? 'file' : 'files'} changed
 			</h3>
 			<ul>
-				<!-- a diff does not promise each path once: a type change is a delete and an add -->
-				{#each changed as file, i (i)}
+				{#each changed as file (file.path)}
 					<li class="flex h-8 items-center gap-2.5 border-b border-base-300">
 						<span class="min-w-0 flex-1 truncate" title={file.path}>{file.path}</span>
 						<span class="font-mono text-xs text-success">+{file.added}</span>
