@@ -992,31 +992,34 @@ mod tests {
             let before = indexed(&repos, REAL, 3).await;
             assert_eq!((before.indexed, before.laid, before.complete), (3, 3, true));
             let old = repos.get(REAL).unwrap();
-            let version = cache::meta(&old.cache.pool, "version").await.unwrap();
-            assert!(version.is_some());
+            let version = |pool| async move {
+                cache::meta(pool, "version")
+                    .await
+                    .unwrap()
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .unwrap_or(0)
+            };
+            let before = version(&old.cache.pool).await;
+            assert!(before > 0);
+            // a key no walk writes, so only the emptying takes it away
+            cache::set_meta(&old.cache.pool, &[("marker", "1".into())])
+                .await
+                .unwrap();
 
             rebuild_caches(app.handle().clone(), app.state::<Repos>())
                 .await
                 .unwrap();
 
-            // the same file, emptied, with the version it had; its new worker
-            // is still letting the wake settle
+            // a new entry on the same file, which the indexer builds again
             let new = repos.get(REAL).expect("the repository is watched again");
             assert!(!Arc::ptr_eq(&old, &new));
             assert_eq!(new.cache.file, old.cache.file);
-            let emptied = cache::progress(&new.cache.pool).await.unwrap();
-            assert_eq!(
-                (emptied.indexed, emptied.laid, emptied.complete),
-                (0, 0, false)
-            );
-            assert_eq!(
-                cache::meta(&new.cache.pool, "version").await.unwrap(),
-                version
-            );
-
-            // and the indexer builds it again
             let after = indexed(&repos, REAL, 3).await;
             assert_eq!((after.indexed, after.laid, after.complete), (3, 3, true));
+            // from an emptied file, whose rounds counted on from the version
+            // it had rather than from zero
+            assert_eq!(cache::meta(&new.cache.pool, "marker").await.unwrap(), None);
+            assert!(version(&new.cache.pool).await > before);
 
             shutdown(&repos).await;
             std::fs::remove_dir_all(dir).unwrap();
