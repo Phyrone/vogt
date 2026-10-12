@@ -289,7 +289,7 @@ mod tests {
             assert_eq!(kept, 10);
 
             close(&pool).await;
-            std::fs::remove_dir_all(dir).unwrap();
+            let _ = std::fs::remove_dir_all(dir);
         });
     }
 
@@ -321,7 +321,7 @@ mod tests {
                     .map(|entry| entry.unwrap().file_name())
                     .collect();
                 assert_eq!(left, ["test.db"], "round {round}");
-                std::fs::remove_dir_all(dir).unwrap();
+                let _ = std::fs::remove_dir_all(dir);
             }
         });
     }
@@ -339,13 +339,11 @@ mod tests {
 
             assert!(started.elapsed() < CLOSING * 3);
             assert!(pool.is_closed());
-            // the held connection closes on its own task once it is let go;
-            // Windows refuses to delete the file while it is still open
+            // the held connection closes on its own task once it is let go,
+            // which may be after this; Windows refuses to delete the file
+            // while it is still open
             drop(held);
-            while pool.size() > 0 {
-                tokio::time::sleep(Duration::from_millis(1)).await;
-            }
-            std::fs::remove_dir_all(dir).unwrap();
+            let _ = std::fs::remove_dir_all(dir);
         });
     }
 
@@ -372,7 +370,7 @@ mod tests {
             assert_eq!(kept, 100);
 
             close(&pool).await;
-            std::fs::remove_dir_all(dir).unwrap();
+            let _ = std::fs::remove_dir_all(dir);
         });
     }
 
@@ -403,7 +401,7 @@ mod tests {
             assert_eq!(space(&pool).await.unwrap().mode, INCREMENTAL);
 
             close(&pool).await;
-            std::fs::remove_dir_all(dir).unwrap();
+            let _ = std::fs::remove_dir_all(dir);
         });
     }
 
@@ -426,7 +424,7 @@ mod tests {
 
             close(&other).await;
             close(&pool).await;
-            std::fs::remove_dir_all(dir).unwrap();
+            let _ = std::fs::remove_dir_all(dir);
         });
     }
 
@@ -477,7 +475,7 @@ mod tests {
             assert!(left.pages < few.pages);
 
             close(&pool).await;
-            std::fs::remove_dir_all(dir).unwrap();
+            let _ = std::fs::remove_dir_all(dir);
         });
     }
 
@@ -502,7 +500,7 @@ mod tests {
             assert_eq!(kept, 50);
 
             close(&pool).await;
-            std::fs::remove_dir_all(dir).unwrap();
+            let _ = std::fs::remove_dir_all(dir);
         });
     }
 
@@ -533,7 +531,7 @@ mod tests {
             assert!(stat.starts_with("500 "), "{stat}");
 
             close(&pool).await;
-            std::fs::remove_dir_all(dir).unwrap();
+            let _ = std::fs::remove_dir_all(dir);
         });
     }
 }
