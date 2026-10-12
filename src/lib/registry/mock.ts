@@ -47,5 +47,7 @@ export const mock = {
 		target.repos = target.repos.filter((r) => r.id !== repo);
 	},
 	syncRepositories: (): Promise<void> => Promise.resolve(),
+	rebuildCaches: (): Promise<void> =>
+		Promise.reject('Caches can only be rebuilt in the desktop app'),
 	pickDirectory: (): string => `~/code/project-${created + 1}`
 };

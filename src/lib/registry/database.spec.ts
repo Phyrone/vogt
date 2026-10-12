@@ -85,6 +85,25 @@ test('a repository is forgotten only once the sync on its way is done', async ()
 	expect(commands()).toEqual(['sync_repositories', 'forget_repo']);
 });
 
+test('the caches are rebuilt only once the sync on its way has opened them', async () => {
+	await initDatabase();
+	const commands = () => invoke.mock.calls.map(([command]) => command);
+	invoke.mockClear();
+
+	// the startup sync is still opening the caches when the rebuild is asked for; the backend
+	// rebuilds the caches it has open, so it must wait for the sync
+	const sync = Promise.withResolvers<string>();
+	invoke.mockReturnValueOnce(sync.promise);
+	const synced = database.syncRepositories();
+	const rebuilt = database.rebuildCaches();
+	await new Promise((done) => setTimeout(done, 0));
+	expect(commands()).toEqual(['sync_repositories']);
+
+	sync.resolve('');
+	await Promise.all([synced, rebuilt]);
+	expect(commands()).toEqual(['sync_repositories', 'rebuild_caches']);
+});
+
 test('a sync after one of two removals does not list the second one again', async () => {
 	await initDatabase();
 	const work = await database.createWorkspace('Work');

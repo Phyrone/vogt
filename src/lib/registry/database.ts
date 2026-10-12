@@ -77,5 +77,13 @@ export const database = {
 			const list = repos.map((r) => ({ id: r.id, workspace: r.workspaceId, path: r.path }));
 			await invoke<void>('sync_repositories', { list });
 		});
+	},
+
+	/**
+	 * Empties every repository cache and lets the indexer build them again. The backend rebuilds
+	 * the caches it has open, so this waits for the syncs on their way to open theirs first.
+	 */
+	rebuildCaches(): Promise<void> {
+		return afterSyncs(() => invoke<void>('rebuild_caches'));
 	}
 };
