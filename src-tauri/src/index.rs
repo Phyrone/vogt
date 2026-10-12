@@ -1372,6 +1372,39 @@ mod tests {
     }
 
     #[test]
+    fn a_shallow_clone_is_walked_to_where_its_history_ends() {
+        tauri::async_runtime::block_on(async {
+            let (source, _repo, _refs) = repository("shallow-source", 3);
+            let dir = scratch("shallow");
+            // libgit2 cannot make a shallow clone, the git CLI can; a local
+            // path only honours --depth through the transport --no-local picks
+            let cloned = std::process::Command::new("git")
+                .args(["clone", "--quiet", "--no-local", "--depth", "1"])
+                .arg(&source)
+                .arg(&dir)
+                .status()
+                .unwrap();
+            assert!(cloned.success());
+            assert!(dir.join(".git").join("shallow").exists());
+
+            let refs = history::refs(&dir).unwrap();
+            let pool = pool().await;
+            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+                .await
+                .unwrap();
+
+            // the parent the clone does not have is not looked for
+            let progress = cache::progress(&pool).await.unwrap();
+            assert_eq!(
+                (progress.indexed, progress.laid, progress.complete),
+                (1, 1, true)
+            );
+            std::fs::remove_dir_all(dir).unwrap();
+            std::fs::remove_dir_all(source).unwrap();
+        });
+    }
+
+    #[test]
     fn the_watcher_ignores_index_churn() {
         let git = Path::new("/repo/.git");
         assert!(!relevant(&[git.join("index")]));
