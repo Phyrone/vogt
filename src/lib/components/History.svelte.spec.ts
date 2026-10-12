@@ -149,3 +149,38 @@ test('a tag and a remote branch of the same name on one commit both show', async
 	await expect.element(page.getByText('commit a')).toBeInTheDocument();
 	expect(page.getByText('origin/x', { exact: true }).elements()).toHaveLength(2);
 });
+
+test('a refresh far down the history puts the reader back on the same commit', async () => {
+	// ten commits arrive on top: every row moves down by ten
+	const history = (version: number, total: number) => {
+		const added = version > 1 ? 10 : 0;
+		const hash = (position: number) => (position < added ? `n${position}` : `c${position - added}`);
+		return {
+			rows: vi.fn(async (from: number, to: number): Promise<HistoryWindow> => ({
+				total: total + added,
+				lanes: 1,
+				rows: Array.from({ length: Math.min(to, total + added) - from }, (_, index) =>
+					row(hash(from + index), 'main', from + index)
+				),
+				edges: []
+			})),
+			locate: vi.fn(async (hash: string) => Number(hash.slice(1)) + added),
+			version,
+			progress: { indexed: total, laid: total, complete: true }
+		};
+	};
+	const props = { lines: main, trunk: 'main', head: 'c0', selected: null, picked: [] };
+	const { scroller, rerender } = await mountScrolling({ source: history(1, 2000), ...props });
+	await expect.element(subject('c0')).toBeInTheDocument();
+	scroller.scrollTop = 1500 * PITCH;
+	await expect.element(subject('c1500')).toBeInTheDocument();
+	const before = scroller.scrollTop;
+
+	const source = history(2, 2000);
+	await rerender({ source });
+	await expect.poll(() => source.locate.mock.calls).toHaveLength(1);
+	const [[anchor]] = source.locate.mock.calls;
+	// the commit that led the rows in view leads them again, ten rows further down
+	await expect.poll(() => scroller.scrollTop).toBe(before + 10 * PITCH);
+	await expect.element(subject(anchor)).toBeInTheDocument();
+});

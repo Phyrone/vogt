@@ -94,13 +94,17 @@
 						const hash = anchor;
 						anchor = undefined;
 						void source.locate(hash).then((row) => {
-							if (row !== null && asked === epoch) $virtualizer.scrollToIndex(row);
+							if (row !== null && asked === epoch) {
+								$virtualizer.scrollToIndex(row, { align: 'start' });
+							}
 						});
 					}
 				}
 			},
 			(reason) => {
-				if (asked === epoch) failure = String(reason);
+				if (asked !== epoch) return;
+				if (chunk === 0) anchor = undefined;
+				failure = String(reason);
 			}
 		);
 	}
@@ -110,7 +114,10 @@
 		void source.version;
 		void only.join('\n');
 		untrack(() => {
-			anchor = shown.nodes[0]?.hash;
+			// the first row in sight, not one of the overscan above it; a refresh before the last
+			// one's rows arrived keeps the place that one was to restore
+			const top = scroller?.scrollTop ?? 0;
+			anchor = shown.nodes.find((row) => row.row * PITCH >= top)?.hash ?? anchor;
 			epoch++;
 			requested.clear();
 			chunks.clear();
@@ -146,6 +153,8 @@
 			// a long history is not held whole: what is far out of view is read again when it is back
 			for (const chunk of requested) {
 				if (chunk >= from - KEEP && chunk <= to + KEEP) continue;
+				// the first rows' answer puts the reader back after a refresh; it is waited for
+				if (chunk === 0 && anchor) continue;
 				requested.delete(chunk);
 				chunks.delete(chunk);
 			}
