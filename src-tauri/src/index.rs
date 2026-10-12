@@ -884,7 +884,7 @@ mod tests {
                 (5, 5, true)
             );
             assert!(reports.load(Ordering::SeqCst) >= 2);
-            let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM node WHERE view_id = 'all'")
+            let rows: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM node WHERE view_id = 'all'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
