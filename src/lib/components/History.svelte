@@ -102,7 +102,7 @@
 				}
 			},
 			(reason) => {
-				if (asked !== epoch) return;
+				if (asked !== epoch || !requested.has(chunk)) return;
 				if (chunk === 0) anchor = undefined;
 				failure = String(reason);
 			}

@@ -184,3 +184,58 @@ test('a refresh far down the history puts the reader back on the same commit', a
 	await expect.poll(() => scroller.scrollTop).toBe(before + 10 * PITCH);
 	await expect.element(subject(anchor)).toBeInTheDocument();
 });
+
+test('an answer for a chunk let go while it was on its way is not kept', async () => {
+	const total = 2000;
+	const answer = (from: number, to: number, name: string): HistoryWindow => ({
+		total,
+		lanes: 1,
+		rows: Array.from({ length: to - from }, (_, index) =>
+			row(`${name}${from + index}`, 'main', from + index)
+		),
+		edges: []
+	});
+	// the first rows answer at once, the others when the test says so
+	const waiting = new Map<number, PromiseWithResolvers<HistoryWindow>>();
+	const source = {
+		rows: vi.fn(async (from: number, to: number): Promise<HistoryWindow> => {
+			if (from === 0) return answer(from, to, 'c');
+			const asked = Promise.withResolvers<HistoryWindow>();
+			waiting.set(from, asked);
+			return asked.promise;
+		}),
+		locate: vi.fn(async () => null),
+		version: 1,
+		progress: { indexed: total, laid: total, complete: true }
+	};
+	const { scroller } = await mountScrolling({
+		source,
+		lines: main,
+		trunk: 'main',
+		head: 'c0',
+		selected: null,
+		picked: []
+	});
+	const settled = () => new Promise((done) => requestAnimationFrame(done));
+	await expect.element(subject('c0')).toBeInTheDocument();
+
+	// the reader passes rows 900 to 1099 and is back at the top before they arrive
+	scroller.scrollTop = 1000 * PITCH;
+	await expect.poll(() => [...waiting.keys()]).toEqual([900, 1000]);
+	scroller.scrollTop = 0;
+	await expect.element(subject('c0')).toBeInTheDocument();
+	waiting.get(900)!.reject(new Error('the cache was closed'));
+	waiting.get(1000)!.resolve(answer(1000, 1100, 'c'));
+	await settled();
+	// the failure of a chunk nobody looks at any more is not shown
+	expect(page.getByRole('alert').elements()).toHaveLength(0);
+
+	// nor are the rows that did arrive kept: back down they are skeletons until read again
+	waiting.clear();
+	scroller.scrollTop = 1000 * PITCH;
+	await expect.poll(() => [...waiting.keys()]).toEqual([900, 1000]);
+	await settled();
+	expect(subject('c1000').elements()).toHaveLength(0);
+	waiting.get(1000)!.resolve(answer(1000, 1100, 'd'));
+	await expect.element(subject('d1000')).toBeInTheDocument();
+});
