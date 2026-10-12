@@ -47,6 +47,7 @@ export const mock = {
 		const target = find(workspace);
 		target.repos = target.repos.filter((r) => r.id !== repo);
 	},
-	syncRepositories(): void {},
+	syncRepositories: (): Promise<void> => Promise.resolve(),
+	rebuildCaches: (): Promise<void> => Promise.reject(m['settings.needs_desktop_rebuild']()),
 	pickDirectory: (): string => `~/code/project-${created + 1}`
 };

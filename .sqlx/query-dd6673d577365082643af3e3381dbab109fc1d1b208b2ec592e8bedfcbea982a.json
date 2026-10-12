@@ -1,0 +1,18 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT COUNT(*) FROM edge WHERE view_id LIKE 'mask:%'",
+	"describe": {
+		"columns": [
+			{
+				"name": "COUNT(*)",
+				"ordinal": 0,
+				"type_info": "Integer"
+			}
+		],
+		"parameters": {
+			"Right": 0
+		},
+		"nullable": [false]
+	},
+	"hash": "dd6673d577365082643af3e3381dbab109fc1d1b208b2ec592e8bedfcbea982a"
+}

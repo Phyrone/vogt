@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use git2::{BranchType, ErrorCode, Oid, Patch, Repository};
+use git2::{BranchType, DiffOptions, ErrorCode, Oid, Patch, Repository};
 use serde::Serialize;
 use sqlx::{Pool, Sqlite};
 use tauri::{AppHandle, State};
@@ -80,7 +80,11 @@ impl Refs {
     pub fn fingerprint(&self) -> String {
         let mut lines: Vec<String> = Vec::new();
         for branch in &self.branches {
-            lines.push(format!("heads/{}\t{}", branch.name, branch.tip));
+            // setting an upstream only edits the config, but the line shows it
+            lines.push(format!(
+                "heads/{}\t{}\t{}",
+                branch.name, branch.tip, branch.remote
+            ));
         }
         if let Some(branch) = &self.head_branch {
             lines.push(format!("head-branch\t{branch}"));
@@ -538,11 +542,6 @@ pub async fn materialize(
         version,
         &rows,
         &edges,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    cache::set_meta(
-        pool,
         &[
             (
                 "lines",
@@ -566,13 +565,7 @@ pub async fn materialize_mask(
     only: &[String],
     version: i64,
 ) -> Result<ViewInfo, String> {
-    let mut only: Vec<String> = only.to_vec();
-    only.sort();
-    only.dedup();
-    let id = format!(
-        "mask:{}",
-        serde_json::to_string(&only).map_err(|e| e.to_string())?
-    );
+    let (only, id) = mask(only)?;
 
     // only the picked lines' rows are read; the unmasked view already holds
     // every commit's line and row, so only lanes and edges are worked out again
@@ -595,33 +588,29 @@ pub async fn materialize_mask(
         .await
         .map_err(|e| e.to_string())?
         .unwrap_or_default();
-    let line_index: HashMap<&str, usize> = lines
-        .iter()
-        .enumerate()
-        .map(|(index, line)| (line.id.as_str(), index))
-        .collect();
     // the picked rows keep the order they had in the unmasked view
     let mut picked: Vec<&_> = rows.iter().collect();
     picked.sort_by_key(|row| row.row);
+    // a row on a line the list does not hold gets a line of its own rather
+    // than borrowing another's; the list is written with the rows, so only a
+    // cache that lost its `lines` entry has such a row
+    let mut ids: Vec<&str> = lines.iter().map(|line| line.id.as_str()).collect();
+    let mut line_index: HashMap<&str, usize> = ids
+        .iter()
+        .enumerate()
+        .map(|(index, id)| (*id, index))
+        .collect();
+    for row in &picked {
+        line_index.entry(row.line.as_str()).or_insert_with(|| {
+            ids.push(row.line.as_str());
+            ids.len() - 1
+        });
+    }
 
-    let hashes: Vec<&str> = picked.iter().map(|row| row.hash.as_str()).collect();
-    let mut parents: HashMap<String, Vec<String>> = HashMap::new();
-    for chunk in hashes.chunks(5_000) {
-        let json = serde_json::to_string(chunk).map_err(|e| e.to_string())?;
-        let found = sqlx::query!(
-            "SELECT hash, parents FROM commits WHERE hash IN (SELECT value FROM json_each(?))",
-            json
-        )
-        .fetch_all(pool)
+    let hashes: Vec<String> = picked.iter().map(|row| row.hash.clone()).collect();
+    let parents = cache::parents(pool, &hashes)
         .await
         .map_err(|e| e.to_string())?;
-        parents.extend(found.into_iter().map(|row| {
-            (
-                row.hash,
-                serde_json::from_str(&row.parents).unwrap_or_default(),
-            )
-        }));
-    }
 
     let mut row_of: HashMap<&str, usize> = HashMap::with_capacity(picked.len());
     for (row, found) in picked.iter().enumerate() {
@@ -630,7 +619,7 @@ pub async fn materialize_mask(
     let stations: Vec<Station> = picked
         .iter()
         .map(|found| Station {
-            line: *line_index.get(found.line.as_str()).unwrap_or(&0),
+            line: line_index[found.line.as_str()],
             parents: parents
                 .get(found.hash.as_str())
                 .map(Vec::as_slice)
@@ -640,11 +629,8 @@ pub async fn materialize_mask(
                 .collect(),
         })
         .collect();
-    let trunk = lines
-        .iter()
-        .position(|line| line.id == trunk)
-        .unwrap_or(lines.len());
-    let layout = layout::layout(&stations, lines.len(), trunk);
+    let trunk = ids.iter().position(|id| *id == trunk).unwrap_or(ids.len());
+    let layout = layout::layout(&stations, ids.len(), trunk);
 
     let nodes: Vec<NodeRow> = picked
         .iter()
@@ -664,7 +650,7 @@ pub async fn materialize_mask(
         .map(|edge| EdgeRow {
             from: edge.from as i64,
             to: edge.to as i64,
-            line: lines[edge.line].id.clone(),
+            line: ids[edge.line].to_owned(),
             points: serde_json::to_string(&edge.points).unwrap_or_default(),
         })
         .collect();
@@ -677,6 +663,7 @@ pub async fn materialize_mask(
         version,
         &nodes,
         &edges,
+        &[],
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -684,6 +671,19 @@ pub async fn materialize_mask(
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "The masked view could not be built.".into())
+}
+
+/// The lines a mask picks, sorted and without repeats, and the id of the view
+/// that lays them out.
+fn mask(only: &[String]) -> Result<(Vec<String>, String), String> {
+    let mut only = only.to_vec();
+    only.sort();
+    only.dedup();
+    let id = format!(
+        "mask:{}",
+        serde_json::to_string(&only).map_err(|e| e.to_string())?
+    );
+    Ok((only, id))
 }
 
 /// Reorders commits so that each comes before its parents, newest first where
@@ -783,7 +783,13 @@ fn files(path: &Path, hash: &str) -> Result<Vec<FileChange>, git2::Error> {
         .ok()
         .map(|parent| parent.tree())
         .transpose()?;
-    let diff = repo.diff_tree_to_tree(before.as_ref(), Some(&commit.tree()?), None)?;
+    // a file that became a link, or the other way round, is one change of
+    // its path; without this it is a delete and an add of the same path,
+    // and the list is keyed by path
+    let mut options = DiffOptions::new();
+    options.include_typechange(true);
+    let diff =
+        repo.diff_tree_to_tree(before.as_ref(), Some(&commit.tree()?), Some(&mut options))?;
     diff.deltas()
         .enumerate()
         .map(|(index, delta)| {
@@ -919,13 +925,7 @@ pub async fn materialize_view(
         .map_err(|e| e.to_string())?
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(0);
-    let mut only = only;
-    only.sort();
-    only.dedup();
-    let id = format!(
-        "mask:{}",
-        serde_json::to_string(&only).map_err(|e| e.to_string())?
-    );
+    let (only, id) = mask(&only)?;
     if let Some(view) = cache::view(pool, &id).await.map_err(|e| e.to_string())?
         && view.version == version
     {
@@ -1004,196 +1004,188 @@ mod tests {
         .collect()
     }
 
-    #[test]
-    fn a_repository_without_commits_has_its_unborn_branch_as_the_only_line() {
-        tauri::async_runtime::block_on(async {
-            let dir = scratch("unborn");
-            init(&dir);
-            let pool = cache_pool(&dir, &[]).await;
+    #[tokio::test]
+    async fn a_repository_without_commits_has_its_unborn_branch_as_the_only_line() {
+        let dir = scratch("unborn");
+        init(&dir);
+        let pool = cache_pool(&dir, &[]).await;
 
-            let refs = refs(&dir).unwrap();
-            let laid = materialize(&pool, &refs, 1).await.unwrap();
+        let refs = refs(&dir).unwrap();
+        let laid = materialize(&pool, &refs, 1).await.unwrap();
 
-            let lines: Vec<Line> =
-                serde_json::from_str(&cache::meta(&pool, "lines").await.unwrap().unwrap()).unwrap();
-            assert_eq!(laid.total, 0);
-            assert_eq!(refs.trunk, "main");
-            assert_eq!(lines.len(), 1);
-            assert_eq!(lines[0].id, "main");
-            std::fs::remove_dir_all(dir).unwrap();
-        });
+        let lines: Vec<Line> =
+            serde_json::from_str(&cache::meta(&pool, "lines").await.unwrap().unwrap()).unwrap();
+        assert_eq!(laid.total, 0);
+        assert_eq!(refs.trunk, "main");
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].id, "main");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn every_commit_gets_a_line_and_a_lane() {
-        tauri::async_runtime::block_on(async {
-            let dir = scratch("lines");
-            let repo = init(&dir);
-            let root = commit(&repo, "main", "root\n\nwhy it exists\n", "a\n", &[]);
-            let topic = commit(&repo, "topic", "topic work", "a\nb\nc\n", &[root]);
-            let second = commit(&repo, "main", "second", "a\nb\n", &[root]);
-            let merge = commit(
-                &repo,
-                "main",
-                "Merge branch 'topic'",
-                "a\nb\nc\n",
-                &[second, topic],
-            );
-            repo.find_branch("topic", BranchType::Local)
-                .unwrap()
-                .delete()
-                .unwrap();
-            let feature = commit(&repo, "feature", "feature work", "x\n", &[merge]);
-            repo.set_head("refs/heads/feature").unwrap();
-            repo.tag_lightweight("v1", &repo.find_object(merge, None).unwrap(), false)
-                .unwrap();
-
-            let pool = cache_pool(&dir, &[root, topic, second, merge, feature]).await;
-            let refs = refs(&dir).unwrap();
-            let laid = materialize(&pool, &refs, 1).await.unwrap();
-
-            assert_eq!(refs.trunk, "main");
-            assert_eq!(refs.head_branch.as_deref(), Some("feature"));
-            assert_eq!(refs.head, Some(feature));
-            assert_eq!(refs.tags, ["v1"]);
-            assert_eq!(laid.total, 5);
-            assert_eq!(
-                cache::view(&pool, ViewInfo::ALL)
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .lanes,
-                2
-            );
-            let lines: Vec<Line> =
-                serde_json::from_str(&cache::meta(&pool, "lines").await.unwrap().unwrap()).unwrap();
-            let names: Vec<(&str, bool)> = lines
-                .iter()
-                .map(|line| (line.name.as_str(), line.merged))
-                .collect();
-            assert_eq!(
-                names,
-                [("main", false), ("feature", false), ("topic", true)]
-            );
-
-            // newest first, a merge before what it merged
-            let rows = rows(&pool).await;
-            assert_eq!(rows[0].0, feature.to_string());
-            assert_eq!(rows[1].0, merge.to_string());
-            assert_eq!(rows[4].0, root.to_string());
-            let row = |id: Oid| {
-                rows.iter()
-                    .find(|(hash, ..)| hash == &id.to_string())
-                    .unwrap()
-            };
-            assert_eq!((row(feature).2.as_str(), row(feature).1), ("feature", 1));
-            assert_eq!([row(merge).1, row(second).1, row(root).1], [0; 3]);
-            assert_eq!(row(topic).2, format!("merged-{topic}"));
-            assert_eq!(row(topic).1, 1);
-            let merge_hash = merge.to_string();
-            let tagged = sqlx::query!(
-                "SELECT pushed, refs FROM node WHERE view_id = ? AND hash = ?",
-                ViewInfo::ALL,
-                merge_hash
-            )
-            .fetch_one(&pool)
-            .await
+    #[tokio::test]
+    async fn every_commit_gets_a_line_and_a_lane() {
+        let dir = scratch("lines");
+        let repo = init(&dir);
+        let root = commit(&repo, "main", "root\n\nwhy it exists\n", "a\n", &[]);
+        let topic = commit(&repo, "topic", "topic work", "a\nb\nc\n", &[root]);
+        let second = commit(&repo, "main", "second", "a\nb\n", &[root]);
+        let merge = commit(
+            &repo,
+            "main",
+            "Merge branch 'topic'",
+            "a\nb\nc\n",
+            &[second, topic],
+        );
+        repo.find_branch("topic", BranchType::Local)
+            .unwrap()
+            .delete()
             .unwrap();
-            assert_eq!(tagged.pushed, 0);
-            assert!(tagged.refs.contains("v1"));
-            let edges =
-                sqlx::query_scalar!("SELECT COUNT(*) FROM edge WHERE view_id = ?", ViewInfo::ALL)
-                    .fetch_one(&pool)
-                    .await
-                    .unwrap();
-            assert_eq!(edges, 5);
+        let feature = commit(&repo, "feature", "feature work", "x\n", &[merge]);
+        repo.set_head("refs/heads/feature").unwrap();
+        repo.tag_lightweight("v1", &repo.find_object(merge, None).unwrap(), false)
+            .unwrap();
 
-            // a mask holds only the commits made on the picked lines
-            let masked = materialize_mask(&pool, &[format!("merged-{topic}")], 1)
+        let pool = cache_pool(&dir, &[root, topic, second, merge, feature]).await;
+        let refs = refs(&dir).unwrap();
+        let laid = materialize(&pool, &refs, 1).await.unwrap();
+
+        assert_eq!(refs.trunk, "main");
+        assert_eq!(refs.head_branch.as_deref(), Some("feature"));
+        assert_eq!(refs.head, Some(feature));
+        assert_eq!(refs.tags, ["v1"]);
+        assert_eq!(laid.total, 5);
+        assert_eq!(
+            cache::view(&pool, ViewInfo::ALL)
+                .await
+                .unwrap()
+                .unwrap()
+                .lanes,
+            2
+        );
+        let lines: Vec<Line> =
+            serde_json::from_str(&cache::meta(&pool, "lines").await.unwrap().unwrap()).unwrap();
+        let names: Vec<(&str, bool)> = lines
+            .iter()
+            .map(|line| (line.name.as_str(), line.merged))
+            .collect();
+        assert_eq!(
+            names,
+            [("main", false), ("feature", false), ("topic", true)]
+        );
+
+        // newest first, a merge before what it merged
+        let rows = rows(&pool).await;
+        assert_eq!(rows[0].0, feature.to_string());
+        assert_eq!(rows[1].0, merge.to_string());
+        assert_eq!(rows[4].0, root.to_string());
+        let row = |id: Oid| {
+            rows.iter()
+                .find(|(hash, ..)| hash == &id.to_string())
+                .unwrap()
+        };
+        assert_eq!((row(feature).2.as_str(), row(feature).1), ("feature", 1));
+        assert_eq!([row(merge).1, row(second).1, row(root).1], [0; 3]);
+        assert_eq!(row(topic).2, format!("merged-{topic}"));
+        assert_eq!(row(topic).1, 1);
+        let merge_hash = merge.to_string();
+        let tagged = sqlx::query!(
+            "SELECT pushed, refs FROM node WHERE view_id = ? AND hash = ?",
+            ViewInfo::ALL,
+            merge_hash
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(tagged.pushed, 0);
+        assert!(tagged.refs.contains("v1"));
+        let edges =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM edge WHERE view_id = ?", ViewInfo::ALL)
+                .fetch_one(&pool)
                 .await
                 .unwrap();
-            assert_eq!(masked.total, 1);
-            let masked_rows = sqlx::query!(
-                "SELECT hash FROM node WHERE view_id = ? ORDER BY row",
-                masked.id
-            )
-            .fetch_all(&pool)
+        assert_eq!(edges, 5);
+
+        // a mask holds only the commits made on the picked lines
+        let masked = materialize_mask(&pool, &[format!("merged-{topic}")], 1)
             .await
             .unwrap();
-            assert_eq!(masked_rows.len(), 1);
-            assert_eq!(masked_rows[0].hash, topic.to_string());
+        assert_eq!(masked.total, 1);
+        let masked_rows = sqlx::query!(
+            "SELECT hash FROM node WHERE view_id = ? ORDER BY row",
+            masked.id
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(masked_rows.len(), 1);
+        assert_eq!(masked_rows[0].hash, topic.to_string());
 
-            let change = |added, removed| FileChange {
-                path: "file.txt".into(),
-                added,
-                removed,
-            };
-            assert_eq!(files(&dir, &root.to_string()).unwrap(), [change(1, 0)]);
-            assert_eq!(files(&dir, &feature.to_string()).unwrap(), [change(1, 3)]);
-            assert!(files(&dir, &merge.to_string()).unwrap().is_empty());
-            std::fs::remove_dir_all(dir).unwrap();
-        });
+        let change = |added, removed| FileChange {
+            path: "file.txt".into(),
+            added,
+            removed,
+        };
+        assert_eq!(files(&dir, &root.to_string()).unwrap(), [change(1, 0)]);
+        assert_eq!(files(&dir, &feature.to_string()).unwrap(), [change(1, 3)]);
+        assert!(files(&dir, &merge.to_string()).unwrap().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn a_commit_a_deleted_branch_left_behind_leaves_the_view() {
-        tauri::async_runtime::block_on(async {
-            let dir = scratch("deleted");
-            let repo = init(&dir);
-            let root = commit(&repo, "main", "root", "a\n", &[]);
-            let gone = commit(&repo, "gone", "gone work", "b\n", &[root]);
-            let pool = cache_pool(&dir, &[root, gone]).await;
-            assert_eq!(
-                materialize(&pool, &refs(&dir).unwrap(), 1)
-                    .await
-                    .unwrap()
-                    .total,
-                2
-            );
-
-            repo.find_branch("gone", BranchType::Local)
+    #[tokio::test]
+    async fn a_commit_a_deleted_branch_left_behind_leaves_the_view() {
+        let dir = scratch("deleted");
+        let repo = init(&dir);
+        let root = commit(&repo, "main", "root", "a\n", &[]);
+        let gone = commit(&repo, "gone", "gone work", "b\n", &[root]);
+        let pool = cache_pool(&dir, &[root, gone]).await;
+        assert_eq!(
+            materialize(&pool, &refs(&dir).unwrap(), 1)
+                .await
                 .unwrap()
-                .delete()
-                .unwrap();
+                .total,
+            2
+        );
 
-            assert_eq!(
-                materialize(&pool, &refs(&dir).unwrap(), 2)
-                    .await
-                    .unwrap()
-                    .total,
-                1
-            );
-            assert_eq!(rows(&pool).await[0].0, root.to_string());
-            std::fs::remove_dir_all(dir).unwrap();
-        });
+        repo.find_branch("gone", BranchType::Local)
+            .unwrap()
+            .delete()
+            .unwrap();
+
+        assert_eq!(
+            materialize(&pool, &refs(&dir).unwrap(), 2)
+                .await
+                .unwrap()
+                .total,
+            1
+        );
+        assert_eq!(rows(&pool).await[0].0, root.to_string());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn reading_the_graph_in_pages_keeps_every_commit_once() {
+    #[tokio::test]
+    async fn reading_the_graph_in_pages_keeps_every_commit_once() {
         use std::collections::HashSet;
-        tauri::async_runtime::block_on(async {
-            let pool = Pool::<Sqlite>::connect("sqlite::memory:").await.unwrap();
-            cache::prepare(&pool).await.unwrap();
-            // all at the same second, so a page boundary lands inside one group
-            let facts: Vec<cache::Fact> = (1u8..=7)
-                .map(|i| cache::Fact {
-                    hash: Oid::from_bytes(&[i; 20]).unwrap().to_string(),
-                    time: 100,
-                    parents: Vec::new(),
-                    subject: format!("commit {i}"),
-                    author: "Vogt".into(),
-                    body: None,
-                })
-                .collect();
-            cache::enqueue(&pool, &facts).await.unwrap();
+        let pool = Pool::<Sqlite>::connect("sqlite::memory:").await.unwrap();
+        cache::prepare(&pool).await.unwrap();
+        // all at the same second, so a page boundary lands inside one group
+        let facts: Vec<cache::Fact> = (1u8..=7)
+            .map(|i| cache::Fact {
+                hash: Oid::from_bytes(&[i; 20]).unwrap().to_string(),
+                time: 100,
+                parents: Vec::new(),
+                subject: format!("commit {i}"),
+                author: "Vogt".into(),
+                body: None,
+            })
+            .collect();
+        cache::enqueue(&pool, &facts).await.unwrap();
 
-            let (oids, nodes, _) = read_graph(&pool, 2).await.unwrap();
+        let (oids, nodes, _) = read_graph(&pool, 2).await.unwrap();
 
-            assert_eq!(oids.len(), 7);
-            assert_eq!(nodes.len(), 7);
-            let unique: HashSet<Oid> = oids.iter().copied().collect();
-            assert_eq!(unique.len(), 7);
-        });
+        assert_eq!(oids.len(), 7);
+        assert_eq!(nodes.len(), 7);
+        let unique: HashSet<Oid> = oids.iter().copied().collect();
+        assert_eq!(unique.len(), 7);
     }
 
     #[test]
@@ -1223,37 +1215,103 @@ mod tests {
         let switched = refs(&dir).unwrap().fingerprint();
         assert_ne!(before_switch, switched);
 
+        // an upstream moves nothing either; setting one only edits the config
+        repo.remote("origin", "https://example.com/vogt.git")
+            .unwrap();
+        repo.reference("refs/remotes/origin/main", root, false, "fetched")
+            .unwrap();
+        let before_upstream = refs(&dir).unwrap().fingerprint();
+        repo.find_branch("other", BranchType::Local)
+            .unwrap()
+            .set_upstream(Some("origin/main"))
+            .unwrap();
+        let tracked = refs(&dir).unwrap();
+        assert!(tracked.branches.iter().any(|branch| branch.remote));
+        assert_ne!(before_upstream, tracked.fingerprint());
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn laying_the_history_out_again_drops_the_masks() {
+        let dir = scratch("masks");
+        let repo = init(&dir);
+        let root = commit(&repo, "main", "root", "a\n", &[]);
+        let pool = cache_pool(&dir, &[root]).await;
+        let refs = refs(&dir).unwrap();
+        materialize(&pool, &refs, 1).await.unwrap();
+
+        let masked = materialize_mask(&pool, &["main".into()], 1).await.unwrap();
+        assert!(masked.id.starts_with("mask:"));
+
+        // the next unmasked layout drops every mask; one that is asked for
+        // again is built from the fresh view
+        materialize(&pool, &refs, 2).await.unwrap();
+        let views = sqlx::query_scalar!("SELECT COUNT(*) FROM views WHERE id LIKE 'mask:%'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let nodes = sqlx::query_scalar!("SELECT COUNT(*) FROM node WHERE view_id LIKE 'mask:%'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let edges = sqlx::query_scalar!("SELECT COUNT(*) FROM edge WHERE view_id LIKE 'mask:%'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!((views, nodes, edges), (0, 0, 0), "a mask is left over");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_mask_lays_out_rows_whose_line_the_list_does_not_hold() {
+        let dir = scratch("unknown-line");
+        let repo = init(&dir);
+        let root = commit(&repo, "main", "root", "a\n", &[]);
+        let next = commit(&repo, "main", "next", "b\n", &[root]);
+        let pool = cache_pool(&dir, &[root, next]).await;
+        materialize(&pool, &refs(&dir).unwrap(), 1).await.unwrap();
+        // the rows are written together with their line list; a cache that
+        // lost the list must not take the layout down with it
+        cache::set_meta(&pool, &[("lines", "[]".into())])
+            .await
+            .unwrap();
+
+        let masked = materialize_mask(&pool, &["main".into()], 1).await.unwrap();
+
+        assert_eq!(masked.total, 2);
+        let lines = sqlx::query_scalar!(
+            "SELECT DISTINCT line FROM edge WHERE view_id = ?",
+            masked.id
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(lines, ["main"]);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn laying_the_history_out_again_drops_the_masks() {
-        tauri::async_runtime::block_on(async {
-            let dir = scratch("masks");
-            let repo = init(&dir);
-            let root = commit(&repo, "main", "root", "a\n", &[]);
-            let pool = cache_pool(&dir, &[root]).await;
-            let refs = refs(&dir).unwrap();
-            materialize(&pool, &refs, 1).await.unwrap();
+    fn a_file_that_becomes_a_link_is_listed_once() {
+        let dir = scratch("typechange");
+        let repo = init(&dir);
+        let first = commit(&repo, "main", "a file", "content\n", &[]);
+        // built with the tree builder rather than the file system, so it
+        // runs where links cannot be made
+        let mut tree = repo.treebuilder(None).unwrap();
+        tree.insert("file.txt", repo.blob(b"elsewhere.txt").unwrap(), 0o120000)
+            .unwrap();
+        let tree = repo.find_tree(tree.write().unwrap()).unwrap();
+        let signature = git2::Signature::now("Vogt", "vogt@example.com").unwrap();
+        let parent = repo.find_commit(first).unwrap();
+        let link = repo
+            .commit(None, &signature, &signature, "a link", &tree, &[&parent])
+            .unwrap();
 
-            let masked = materialize_mask(&pool, &["main".into()], 1).await.unwrap();
-            assert!(masked.id.starts_with("mask:"));
-
-            // the next unmasked layout drops every mask; one that is asked for
-            // again is built from the fresh view
-            materialize(&pool, &refs, 2).await.unwrap();
-            for table in ["views", "node", "edge"] {
-                let left: i64 = sqlx::query_scalar(&format!(
-                    "SELECT COUNT(*) FROM {table} WHERE {} LIKE 'mask:%'",
-                    if table == "views" { "id" } else { "view_id" }
-                ))
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-                assert_eq!(left, 0, "{table} still holds a mask");
-            }
-            std::fs::remove_dir_all(dir).unwrap();
-        });
+        let changes = files(&dir, &link.to_string()).unwrap();
+        let paths: Vec<&Path> = changes.iter().map(|change| change.path.as_path()).collect();
+        assert_eq!(paths, [Path::new("file.txt")]);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

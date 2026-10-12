@@ -51,6 +51,11 @@ export function loadRepoDatabase(id: string, path: string): Promise<RepoDatabase
 			return { sqlite, db: drizzle(proxy(sqlite), { schema }) };
 		})();
 		open.set(id, pending);
+		// a failure is often passing (a locked file, a virus scanner), so the next call tries again
+		const loading = pending;
+		loading.catch(() => {
+			if (open.get(id) === loading) open.delete(id);
+		});
 	}
 	return pending;
 }

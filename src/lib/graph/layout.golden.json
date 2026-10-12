@@ -1,0 +1,232 @@
+[
+	{
+		"name": "merges into the trunk and into a branch",
+		"trunk": "main",
+		"lines": ["main", "feat", "wip", "fix", "sub"],
+		"commits": [
+			{ "hash": "w2", "line": "wip", "parents": ["w1"] },
+			{ "hash": "m6", "line": "main", "parents": ["m5", "x2"] },
+			{ "hash": "x2", "line": "fix", "parents": ["x1"] },
+			{ "hash": "x1", "line": "fix", "parents": ["m5"] },
+			{ "hash": "m5", "line": "main", "parents": ["m4", "f3"] },
+			{ "hash": "f3", "line": "feat", "parents": ["f2", "s1"] },
+			{ "hash": "s1", "line": "sub", "parents": ["f1"] },
+			{ "hash": "f2", "line": "feat", "parents": ["f1"] },
+			{ "hash": "w1", "line": "wip", "parents": ["m3"] },
+			{ "hash": "f1", "line": "feat", "parents": ["m3"] },
+			{ "hash": "m4", "line": "main", "parents": ["m3"] },
+			{ "hash": "m3", "line": "main", "parents": ["m2"] },
+			{ "hash": "m2", "line": "main", "parents": ["m1"] },
+			{ "hash": "m1", "line": "main", "parents": ["0000000"] }
+		],
+		"lanes": 4,
+		"lane": [1, 0, 2, 2, 0, 2, 3, 2, 1, 2, 0, 0, 0, 0],
+		"edges": [
+			{
+				"from": 0,
+				"to": 8,
+				"line": "wip",
+				"points": [
+					[1, 0],
+					[1, 8]
+				]
+			},
+			{
+				"from": 1,
+				"to": 2,
+				"line": "fix",
+				"points": [
+					[0, 1],
+					[2, 2],
+					[2, 2]
+				]
+			},
+			{
+				"from": 1,
+				"to": 4,
+				"line": "main",
+				"points": [
+					[0, 1],
+					[0, 4]
+				]
+			},
+			{
+				"from": 2,
+				"to": 3,
+				"line": "fix",
+				"points": [
+					[2, 2],
+					[2, 3]
+				]
+			},
+			{
+				"from": 3,
+				"to": 4,
+				"line": "fix",
+				"points": [
+					[2, 3],
+					[2, 3],
+					[0, 4]
+				]
+			},
+			{
+				"from": 4,
+				"to": 5,
+				"line": "feat",
+				"points": [
+					[0, 4],
+					[2, 5],
+					[2, 5]
+				]
+			},
+			{
+				"from": 4,
+				"to": 10,
+				"line": "main",
+				"points": [
+					[0, 4],
+					[0, 10]
+				]
+			},
+			{
+				"from": 5,
+				"to": 6,
+				"line": "sub",
+				"points": [
+					[2, 5],
+					[3, 6],
+					[3, 6]
+				]
+			},
+			{
+				"from": 5,
+				"to": 7,
+				"line": "feat",
+				"points": [
+					[2, 5],
+					[2, 7]
+				]
+			},
+			{
+				"from": 6,
+				"to": 9,
+				"line": "sub",
+				"points": [
+					[3, 6],
+					[3, 8],
+					[2, 9]
+				]
+			},
+			{
+				"from": 7,
+				"to": 9,
+				"line": "feat",
+				"points": [
+					[2, 7],
+					[2, 9]
+				]
+			},
+			{
+				"from": 8,
+				"to": 11,
+				"line": "wip",
+				"points": [
+					[1, 8],
+					[1, 10],
+					[0, 11]
+				]
+			},
+			{
+				"from": 9,
+				"to": 11,
+				"line": "feat",
+				"points": [
+					[2, 9],
+					[2, 9],
+					[0, 11]
+				]
+			},
+			{
+				"from": 10,
+				"to": 11,
+				"line": "main",
+				"points": [
+					[0, 10],
+					[0, 11]
+				]
+			},
+			{
+				"from": 11,
+				"to": 12,
+				"line": "main",
+				"points": [
+					[0, 11],
+					[0, 12]
+				]
+			},
+			{
+				"from": 12,
+				"to": 13,
+				"line": "main",
+				"points": [
+					[0, 12],
+					[0, 13]
+				]
+			}
+		]
+	},
+	{
+		"name": "two lines that start on the same row take lanes in line order",
+		"trunk": "main",
+		"lines": ["main", "z", "y"],
+		"commits": [
+			{ "hash": "m2", "line": "main", "parents": ["m1", "y1"] },
+			{ "hash": "z1", "line": "z", "parents": ["m1"] },
+			{ "hash": "y1", "line": "y", "parents": ["m1"] },
+			{ "hash": "m1", "line": "main", "parents": [] }
+		],
+		"lanes": 3,
+		"lane": [0, 1, 2, 0],
+		"edges": [
+			{
+				"from": 0,
+				"to": 2,
+				"line": "y",
+				"points": [
+					[0, 0],
+					[2, 2],
+					[2, 2]
+				]
+			},
+			{
+				"from": 0,
+				"to": 3,
+				"line": "main",
+				"points": [
+					[0, 0],
+					[0, 3]
+				]
+			},
+			{
+				"from": 1,
+				"to": 3,
+				"line": "z",
+				"points": [
+					[1, 1],
+					[1, 2],
+					[0, 3]
+				]
+			},
+			{
+				"from": 2,
+				"to": 3,
+				"line": "y",
+				"points": [
+					[2, 2],
+					[2, 2],
+					[0, 3]
+				]
+			}
+		]
+	}
+]

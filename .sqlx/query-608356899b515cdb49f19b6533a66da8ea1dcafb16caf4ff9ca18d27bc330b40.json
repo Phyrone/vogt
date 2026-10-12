@@ -1,0 +1,18 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT DISTINCT line FROM edge WHERE view_id = ?",
+	"describe": {
+		"columns": [
+			{
+				"name": "line",
+				"ordinal": 0,
+				"type_info": "Text"
+			}
+		],
+		"parameters": {
+			"Right": 1
+		},
+		"nullable": [false]
+	},
+	"hash": "608356899b515cdb49f19b6533a66da8ea1dcafb16caf4ff9ca18d27bc330b40"
+}

@@ -1,0 +1,12 @@
+{
+	"db_name": "SQLite",
+	"query": "INSERT INTO migration (version, description) VALUES (?, ?)",
+	"describe": {
+		"columns": [],
+		"parameters": {
+			"Right": 2
+		},
+		"nullable": []
+	},
+	"hash": "618dda5440472f864317077bb55359a7d27b2676bdff58b01a3c0998c0343e11"
+}

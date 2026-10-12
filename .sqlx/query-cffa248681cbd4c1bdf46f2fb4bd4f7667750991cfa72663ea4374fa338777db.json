@@ -1,0 +1,18 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT COUNT(*) FROM views WHERE id LIKE 'mask:%'",
+	"describe": {
+		"columns": [
+			{
+				"name": "COUNT(*)",
+				"ordinal": 0,
+				"type_info": "Integer"
+			}
+		],
+		"parameters": {
+			"Right": 0
+		},
+		"nullable": [false]
+	},
+	"hash": "cffa248681cbd4c1bdf46f2fb4bd4f7667750991cfa72663ea4374fa338777db"
+}

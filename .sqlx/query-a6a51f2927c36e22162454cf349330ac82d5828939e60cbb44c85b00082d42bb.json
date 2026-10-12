@@ -1,0 +1,18 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT body FROM commits WHERE time = 40",
+	"describe": {
+		"columns": [
+			{
+				"name": "body",
+				"ordinal": 0,
+				"type_info": "Text"
+			}
+		],
+		"parameters": {
+			"Right": 0
+		},
+		"nullable": [true]
+	},
+	"hash": "a6a51f2927c36e22162454cf349330ac82d5828939e60cbb44c85b00082d42bb"
+}

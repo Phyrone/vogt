@@ -3,6 +3,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { appCacheDir, appConfigDir } from '@tauri-apps/api/path';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
 import { m } from '#lib/paraglide/messages.js';
+import { rebuildCaches as rebuildRegistryCaches } from '#lib/registry/api.ts';
 
 /** Whether the page runs in the desktop app, where the actions here reach the system. */
 export const desktop = isTauri();
@@ -30,10 +31,10 @@ export async function openCacheDir(): Promise<void> {
 	await openPath(await appCacheDir());
 }
 
-/** Drops every repository cache and lets the indexer build them again. Not implemented yet. */
+/** Empties every repository cache and lets the indexer build them again. */
 export async function rebuildCaches(): Promise<void> {
-	if (!desktop) throw m['settings.needs_desktop_rebuild']();
-	await invoke('rebuild_caches');
+	// the registry orders it after the syncs on their way, which open the caches it empties
+	await rebuildRegistryCaches();
 }
 
 /** The version this flavour's update channel offers above the running one, or null when there is none. */

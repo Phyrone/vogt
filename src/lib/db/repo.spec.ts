@@ -4,6 +4,8 @@ import { locate, loadRepoDatabase, window } from './repo.ts';
 
 // the repositories' cache files, backed by in-memory SQLite with the real migrations
 const opened = new Map<string, InstanceType<(typeof import('node:sqlite'))['DatabaseSync']>>();
+// paths whose next load fails, as a locked file does
+const failing = new Set<string>();
 
 vi.mock('@tauri-apps/plugin-sql', async () => {
 	const { readdirSync, readFileSync } = await import('node:fs');
@@ -11,6 +13,7 @@ vi.mock('@tauri-apps/plugin-sql', async () => {
 	return {
 		default: {
 			async load(path: string) {
+				if (failing.delete(path)) throw new Error('database is locked');
 				const sqlite = new DatabaseSync(':memory:');
 				for (const file of readdirSync('drizzle-repo')
 					.filter((file) => file.endsWith('.sql'))
@@ -73,4 +76,15 @@ test('a window and a locate read the cache the Rust side writes', async () => {
 	// and a commit is found by its hash, not its row
 	expect(await locate(repo, 'c1')).toBe(2);
 	expect(await locate(repo, 'gone')).toBeNull();
+});
+
+test('a cache file that failed to load is tried again', async () => {
+	const path = '/tmp/vogt-repo-spec-locked.db';
+	failing.add(`sqlite:${path}`);
+	await expect(loadRepoDatabase('repo-locked', path)).rejects.toThrow('database is locked');
+
+	const repo = await loadRepoDatabase('repo-locked', path);
+	expect(repo.db).toBeDefined();
+	// and once open, the same connection is handed out again
+	expect(await loadRepoDatabase('repo-locked', path)).toBe(repo);
 });

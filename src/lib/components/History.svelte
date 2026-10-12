@@ -51,6 +51,8 @@
 	const CHUNK = 100;
 	/** Skeleton rows shown past the end of what the index has laid out yet. */
 	const SKELETON = 40;
+	/** Chunks this far from the ones in view are let go, and asked for again when they come back. */
+	const KEEP = 4;
 
 	/** Leave the rest out instead of dimming it. */
 	let hide = $state(false);
@@ -74,7 +76,8 @@
 		const asked = epoch;
 		source.rows(chunk * CHUNK, (chunk + 1) * CHUNK, only).then(
 			(window) => {
-				if (asked !== epoch) return;
+				// a chunk let go while it was on its way is not kept either
+				if (asked !== epoch || !requested.has(chunk)) return;
 				chunks.set(chunk, window);
 				total = window.total;
 				lanes = window.lanes;
@@ -92,13 +95,17 @@
 						const hash = anchor;
 						anchor = undefined;
 						void source.locate(hash).then((row) => {
-							if (row !== null && asked === epoch) $virtualizer.scrollToIndex(row);
+							if (row !== null && asked === epoch) {
+								$virtualizer.scrollToIndex(row, { align: 'start' });
+							}
 						});
 					}
 				}
 			},
 			(reason) => {
-				if (asked === epoch) failure = String(reason);
+				if (asked !== epoch || !requested.has(chunk)) return;
+				if (chunk === 0) anchor = undefined;
+				failure = String(reason);
 			}
 		);
 	}
@@ -108,7 +115,14 @@
 		void source.version;
 		void only.join('\n');
 		untrack(() => {
-			anchor = shown.nodes[0]?.hash;
+			// the first row in sight, not one of the overscan above it. A refresh before the last
+			// one's first rows arrived keeps the place that one was to restore: the rows in view may
+			// already be laid out anew, and at the old scrollTop they hold another commit. A reader at
+			// the very top stays there instead, so that new commits show up above the rest. A masked
+			// view keeps no place either: the row the commit is found in is one of the unmasked view
+			const top = scroller?.scrollTop ?? 0;
+			if (top === 0 || only.length > 0) anchor = undefined;
+			else anchor ??= shown.nodes.find((row) => row.row * PITCH >= top)?.hash;
 			epoch++;
 			requested.clear();
 			chunks.clear();
@@ -141,6 +155,14 @@
 		const [from, to] = [Math.floor(first / CHUNK), Math.floor(last / CHUNK)];
 		untrack(() => {
 			for (let chunk = from; chunk <= to; chunk++) load(chunk);
+			// a long history is not held whole: what is far out of view is read again when it is back
+			for (const chunk of requested) {
+				if (chunk >= from - KEEP && chunk <= to + KEEP) continue;
+				// the first rows' answer puts the reader back after a refresh; it is waited for
+				if (chunk === 0 && anchor) continue;
+				requested.delete(chunk);
+				chunks.delete(chunk);
+			}
 		});
 	});
 
@@ -290,7 +312,8 @@
 											>{m['history.here']()}</span
 										>
 									{/if}
-									{#each commit.refs ?? [] as ref (ref.label)}
+									<!-- a tag and a remote branch can share a name -->
+									{#each commit.refs ?? [] as ref (`${ref.kind}:${ref.label}`)}
 										<span class="badge shrink-0 badge-outline signage badge-sm">{ref.label}</span>
 									{/each}
 									<span class="truncate">{commit.subject}</span>
