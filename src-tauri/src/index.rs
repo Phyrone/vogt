@@ -793,7 +793,19 @@ async fn renew<R: tauri::Runtime>(
     repos: &Repos,
     repo: &Repo,
 ) -> Result<(), String> {
-    let emptied = empty(&repo.cache.pool).await.map_err(|e| e.to_string());
+    if let Err(failure) = empty(&repo.cache.pool).await {
+        // the reset runs outside a transaction, so half a schema may be left;
+        // no worker is started on it. Without the entry, the next command to
+        // want the repository opens the file again, and `cache::prepare`
+        // rebuilds what is missing.
+        repos
+            .open
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&repo.id);
+        maintenance::close(&repo.cache.pool).await;
+        return Err(failure.to_string());
+    }
     let cache = Cache {
         file: repo.cache.file.clone(),
         pool: repo.cache.pool.clone(),
@@ -809,7 +821,7 @@ async fn renew<R: tauri::Runtime>(
             .remove(&repo.id);
         return Err(failure);
     }
-    emptied
+    Ok(())
 }
 
 /// Drops every table of a cache and makes them again, empty. The version is
@@ -1116,6 +1128,52 @@ mod tests {
         // it had rather than from zero
         assert_eq!(cache::meta(&new.cache.pool, "marker").await.unwrap(), None);
         assert!(version(&new.cache.pool).await > before);
+
+        shutdown(&repos).await;
+        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn a_cache_that_cannot_be_emptied_is_opened_again_instead_of_watched() {
+        let (dir, _repo, _refs) = repository("failed-rebuild", 3);
+        let root = scratch("failed-rebuild-cache");
+        let app = app_with_cache(&root);
+        let list = || {
+            vec![Registered {
+                id: REAL.into(),
+                workspace: WORKSPACE.into(),
+                path: dir.clone(),
+            }]
+        };
+        sync_repositories(app.handle().clone(), app.state::<Repos>(), list())
+            .await
+            .unwrap();
+        let repos = app.state::<Repos>();
+        indexed(&repos, REAL, 3).await;
+        let old = repos.get(REAL).unwrap();
+        halt(&old).await;
+        // a closed pool makes the emptying fail, as an I/O error halfway would
+        old.cache.pool.close().await;
+
+        let failed = {
+            let _opening = repos.opening.lock().await;
+            renew(app.handle(), &repos, &old).await
+        };
+
+        // no worker runs on the broken cache; the next sync opens it again
+        assert!(failed.is_err());
+        assert!(repos.get(REAL).is_none());
+        sync_repositories(app.handle().clone(), app.state::<Repos>(), list())
+            .await
+            .unwrap();
+        let reopened = repos.get(REAL).expect("the repository is watched again");
+        assert!(!Arc::ptr_eq(&old, &reopened));
+        let progress = indexed(&repos, REAL, 3).await;
+        assert_eq!(
+            (progress.indexed, progress.laid, progress.complete),
+            (3, 3, true)
+        );
 
         shutdown(&repos).await;
         std::fs::remove_dir_all(dir).unwrap();
