@@ -175,10 +175,18 @@ async fn start<R: tauri::Runtime>(
 fn watch(repo: &Arc<Repo>) -> Result<notify::RecommendedWatcher, String> {
     let (gitdir, commondir) = history::git_dirs(&repo.path).map_err(history::open_error)?;
     let repo = repo.clone();
+    // FSEvents reports the real path of what it watches
+    let reported = if cfg!(target_os = "macos") {
+        commondir
+            .canonicalize()
+            .unwrap_or_else(|_| commondir.clone())
+    } else {
+        commondir.clone()
+    };
     let mut watcher = notify::RecommendedWatcher::new(
         move |event: notify::Result<notify::Event>| {
             let Ok(event) = event else { return };
-            if !relevant(&event) {
+            if !relevant(&event, &reported) {
                 return;
             }
             repo.dirty.store(true, Ordering::SeqCst);
@@ -215,17 +223,21 @@ fn watch(repo: &Arc<Repo>) -> Result<notify::RecommendedWatcher, String> {
     Ok(watcher)
 }
 
-/// Whether `event` can move a ref or HEAD. Reading a file is no change: the
+/// Whether `event` in the repository whose common git directory is
+/// `commondir` can move a ref or HEAD. Reading a file is no change: the
 /// inotify backend reports every open, and a sync reads the refs, so letting
-/// those through would have each sync wake the next. An editor rewrites
-/// `.git/index` and `.git/index.lock` on every `git status`, which is not
+/// those through would have each sync wake the next. An editor rewrites the
+/// index and `index.lock` of a worktree on every `git status`, which is not
 /// worth a sync; a ref update arrives as the rename onto its final name. A
-/// rescan signal, or an event without paths, is always relevant, and so is a
-/// kind the backend could not tell.
-fn relevant(event: &notify::Event) -> bool {
+/// ref may be named `index` too, so only the index files themselves are left
+/// out: the ones in `commondir` and in a linked worktree's directory under
+/// it. A rescan signal, or an event without paths, is always relevant, and so
+/// is a kind the backend could not tell.
+fn relevant(event: &notify::Event, commondir: &Path) -> bool {
     if matches!(event.kind, notify::EventKind::Access(_)) {
         return false;
     }
+    let worktrees = commondir.join("worktrees");
     event.need_rescan()
         || event.paths.is_empty()
         || event.paths.iter().any(|path| {
@@ -233,7 +245,10 @@ fn relevant(event: &notify::Event) -> bool {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or_default();
-            name != "index" && !name.ends_with(".lock")
+            let parent = path.parent();
+            let index = name == "index"
+                && (parent == Some(commondir) || parent.and_then(Path::parent) == Some(&worktrees));
+            !index && !name.ends_with(".lock")
         })
 }
 
@@ -1429,29 +1444,45 @@ mod tests {
     #[test]
     fn the_watcher_ignores_index_churn() {
         use notify::event::{CreateKind, EventKind, ModifyKind, RenameMode};
-        let renamed = |paths: &[PathBuf]| {
-            relevant(&event(
-                EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
-                paths,
-            ))
-        };
         let git = Path::new("/repo/.git");
+        let renamed = |paths: &[PathBuf]| {
+            relevant(
+                &event(EventKind::Modify(ModifyKind::Name(RenameMode::Both)), paths),
+                git,
+            )
+        };
         assert!(!renamed(&[git.join("index")]));
         assert!(!renamed(&[git.join("index.lock")]));
         assert!(!renamed(&[git.join("index"), git.join("index.lock")]));
+        // a linked worktree keeps its index in its own directory
+        assert!(!renamed(&[git.join("worktrees/feature/index")]));
         assert!(renamed(&[git.join("HEAD")]));
         assert!(renamed(&[git.join("packed-refs")]));
         assert!(renamed(&[git.join("refs/heads/main")]));
-        assert!(relevant(&event(
-            EventKind::Create(CreateKind::File),
-            &[git.join("refs/tags/v1")]
-        )));
+        assert!(relevant(
+            &event(
+                EventKind::Create(CreateKind::File),
+                &[git.join("refs/tags/v1")]
+            ),
+            git
+        ));
+        // a branch, tag or remote branch named `index` is a ref like any other
+        for name in [
+            "heads/index",
+            "heads/worktrees/x/index",
+            "tags/index",
+            "remotes/origin/index",
+        ] {
+            let lock = git.join(format!("refs/{name}.lock"));
+            assert!(renamed(&[lock, git.join("refs").join(name)]), "{name}");
+        }
         // one relevant path is enough
         assert!(renamed(&[git.join("index"), git.join("refs/heads/main")]));
         // an event without paths is a rescan signal, never ignorable
-        assert!(relevant(&event(EventKind::Any, &[])));
+        assert!(relevant(&event(EventKind::Any, &[]), git));
         assert!(relevant(
-            &event(EventKind::Other, &[]).set_flag(notify::event::Flag::Rescan)
+            &event(EventKind::Other, &[]).set_flag(notify::event::Flag::Rescan),
+            git
         ));
     }
 
@@ -1459,15 +1490,19 @@ mod tests {
     fn the_watcher_ignores_reads() {
         use notify::event::{AccessKind, AccessMode, EventKind};
         let head = [PathBuf::from("/repo/.git/refs/heads/main")];
+        let git = Path::new("/repo/.git");
         // what the inotify backend reports when a sync reads the refs
-        assert!(!relevant(&event(
-            EventKind::Access(AccessKind::Open(AccessMode::Any)),
-            &head
-        )));
-        assert!(!relevant(&event(
-            EventKind::Access(AccessKind::Close(AccessMode::Read)),
-            &head
-        )));
+        assert!(!relevant(
+            &event(EventKind::Access(AccessKind::Open(AccessMode::Any)), &head),
+            git
+        ));
+        assert!(!relevant(
+            &event(
+                EventKind::Access(AccessKind::Close(AccessMode::Read)),
+                &head
+            ),
+            git
+        ));
     }
 
     /// An entry for `dir` with its watch on, and nothing heard yet.
