@@ -54,6 +54,12 @@ importers:
       '@inlang/paraglide-js':
         specifier: ^2.18.2
         version: 2.27.0(typescript@6.0.3)(vite@8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+      '@inlang/plugin-m-function-matcher':
+        specifier: 2.3.0
+        version: 2.3.0(@typescript-eslint/types@8.71.1)
+      '@inlang/plugin-message-format':
+        specifier: 4.5.0
+        version: 4.5.0
       '@playwright/test':
         specifier: ^1.60.0
         version: 1.64.0
@@ -808,6 +814,12 @@ packages:
         optional: true
       vite:
         optional: true
+
+  '@inlang/plugin-m-function-matcher@2.3.0':
+    resolution: {integrity: sha512-C1wBvCl+xwrfBS18OO6+JEYZDeI2pnLg/yed6C/TSGOU+K4chsV8kEkUuy42L335yX8Oe/yK7SMyVwJRYBWbWQ==}
+
+  '@inlang/plugin-message-format@4.5.0':
+    resolution: {integrity: sha512-sUiIAxNjFBciVun5bVJMZZ0fN6jU9RRaul3ThmE7kyXUtOeOE5GwrBdVCipRn/gxgMhZlCh88oO8RJbXegn+pA==}
 
   '@inlang/recommend-sherlock@0.2.1':
     resolution: {integrity: sha512-ckv8HvHy/iTqaVAEKrr+gnl+p3XFNwe5D2+6w6wJk2ORV2XkcRkKOJ/XsTUJbPSiyi4PI+p+T3bqbmNx/rDUlg==}
@@ -3466,6 +3478,19 @@ snapshots:
     optionalDependencies:
       typescript: 6.0.3
       vite: 8.3.4(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
+
+  '@inlang/plugin-m-function-matcher@2.3.0(@typescript-eslint/types@8.71.1)':
+    dependencies:
+      '@babel/parser': 7.29.9
+      '@inlang/sdk': 4.0.0
+      svelte: 5.57.2(@typescript-eslint/types@8.71.1)
+    transitivePeerDependencies:
+      - '@typescript-eslint/types'
+
+  '@inlang/plugin-message-format@4.5.0':
+    dependencies:
+      '@inlang/sdk': 4.0.0
+      '@sinclair/typebox': 0.31.30
 
   '@inlang/recommend-sherlock@0.2.1':
     dependencies:
