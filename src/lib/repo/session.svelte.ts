@@ -115,8 +115,13 @@ export class RepoSession {
 			// `version` moves only with `lines`, in #apply; this keeps one refresh
 			// per version while it is still running
 			if (changed.version === this.version || changed.version === this.#asked) return;
-			this.#asked = changed.version;
-			void this.refresh();
+			const asked = changed.version;
+			this.#asked = asked;
+			this.refresh().catch((reason) => {
+				// the next event of this version asks again
+				if (this.#asked === asked) this.#asked = 0;
+				console.error('vogt: the history could not be read again', reason);
+			});
 		});
 	}
 
