@@ -139,6 +139,9 @@ export class RepoSession {
 			// `version` moves only with `lines`, in #apply; this keeps one refresh
 			// per version while it is still running
 			if (changed.version === this.version || changed.version === this.#asked) return;
+			// laying the history out again dropped every masked view; their rows are gone now,
+			// not only once the refresh is through
+			this.#views.clear();
 			reread(changed.version);
 		});
 		return () => {

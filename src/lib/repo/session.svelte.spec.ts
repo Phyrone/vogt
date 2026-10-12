@@ -138,3 +138,29 @@ test('one mask is laid out once for all the chunks that ask for it', async () =>
 	await session.rows(0, 100, ['c']);
 	expect(materializeView).toHaveBeenCalledTimes(4);
 });
+
+test('a masked view is laid out again as soon as the history changed', async () => {
+	const session = new RepoSession(
+		{ ...opened(1), db: {} as RepoDatabase },
+		'ws',
+		'repo',
+		'/tmp/repo'
+	);
+	await session.listen();
+	vi.mocked(materializeView).mockResolvedValue({
+		id: 'v',
+		only: ['a'],
+		total: 0,
+		lanes: 1,
+		version: 1
+	});
+	await session.rows(0, 100, ['a']);
+	expect(materializeView).toHaveBeenCalledOnce();
+
+	// the backend dropped the masked views with the new layout; the summary is still on its way
+	vi.mocked(readRepository).mockReturnValue(new Promise(() => {}));
+	emit(changed(2));
+	await session.rows(0, 100, ['a']);
+	expect(materializeView).toHaveBeenCalledTimes(2);
+	expect(session.version).toBe(1);
+});
