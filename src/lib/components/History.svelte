@@ -114,12 +114,13 @@
 		void source.version;
 		void only.join('\n');
 		untrack(() => {
-			// the first row in sight, not one of the overscan above it; a refresh before the last
-			// one's rows arrived keeps the place that one was to restore. A reader at the very top
-			// stays there instead, so that new commits show up above the rest
+			// the first row in sight, not one of the overscan above it. A refresh before the last
+			// one's first rows arrived keeps the place that one was to restore: the rows in view may
+			// already be laid out anew, and at the old scrollTop they hold another commit. A reader at
+			// the very top stays there instead, so that new commits show up above the rest
 			const top = scroller?.scrollTop ?? 0;
 			if (top === 0) anchor = undefined;
-			else anchor = shown.nodes.find((row) => row.row * PITCH >= top)?.hash ?? anchor;
+			else anchor ??= shown.nodes.find((row) => row.row * PITCH >= top)?.hash;
 			epoch++;
 			requested.clear();
 			chunks.clear();

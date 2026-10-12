@@ -185,6 +185,49 @@ test('a refresh far down the history puts the reader back on the same commit', a
 	await expect.element(subject(anchor)).toBeInTheDocument();
 });
 
+test('a second refresh before the first one settled keeps the same commit in view', async () => {
+	// each refresh puts ten commits on top; the first rows can be held back
+	const history = (version: number, hold = false) => {
+		const added = (version - 1) * 10;
+		const hash = (position: number) => (position < added ? `n${position}` : `c${position - added}`);
+		return {
+			rows: vi.fn((from: number, to: number): Promise<HistoryWindow> => {
+				const window = {
+					total: 2000 + added,
+					lanes: 1,
+					rows: Array.from({ length: Math.min(to, 2000 + added) - from }, (_, index) =>
+						row(hash(from + index), 'main', from + index)
+					),
+					edges: []
+				};
+				return hold && from === 0 ? new Promise(() => {}) : Promise.resolve(window);
+			}),
+			locate: vi.fn(async (hash: string) => Number(hash.slice(1)) + added),
+			version,
+			progress: { indexed: 2000, laid: 2000, complete: true }
+		};
+	};
+	const props = { lines: main, trunk: 'main', head: 'c0', selected: null, picked: [] };
+	const { scroller, rerender } = await mountScrolling({ source: history(1), ...props });
+	await expect.element(subject('c0')).toBeInTheDocument();
+	scroller.scrollTop = 1500 * PITCH;
+	await expect.element(subject('c1500')).toBeInTheDocument();
+	const before = scroller.scrollTop;
+
+	// the rows in view arrive in the new layout, the first rows do not
+	const second = history(2, true);
+	await rerender({ source: second });
+	await expect.poll(() => second.rows.mock.calls.some(([from]) => from === 1500)).toBe(true);
+	await new Promise((done) => requestAnimationFrame(done));
+	// the row that led the view holds another commit now
+	expect(subject('c1490').elements()).toHaveLength(1);
+
+	const third = history(3);
+	await rerender({ source: third });
+	await expect.poll(() => third.locate.mock.calls).toEqual([['c1500']]);
+	await expect.poll(() => scroller.scrollTop).toBe(before + 20 * PITCH);
+});
+
 test('a refresh at the top of the history shows the new commit at the top', async () => {
 	const history = (version: number) => {
 		const added = version > 1 ? 1 : 0;
