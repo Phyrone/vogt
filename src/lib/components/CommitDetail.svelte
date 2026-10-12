@@ -4,6 +4,7 @@
 	import ListRestart from '@lucide/svelte/icons/list-restart';
 	import PencilLine from '@lucide/svelte/icons/pencil-line';
 	import RotateCcw from '@lucide/svelte/icons/rotate-ccw';
+	import { m } from '#lib/paraglide/messages.js';
 	import type { Commit, FileChange, Line } from '#lib/repo/types.ts';
 	import LineBadge from './LineBadge.svelte';
 
@@ -35,7 +36,9 @@
 		<LineBadge {line} size="sm" />
 		<span class="font-mono text-xs">{commit.hash.slice(0, 7)}</span>
 		<span>{commit.author}, {commit.when}</span>
-		{#if !commit.pushed}<span class="badge badge-outline signage badge-sm">not pushed</span>{/if}
+		{#if !commit.pushed}<span class="badge badge-outline signage badge-sm"
+				>{m['commit.not_pushed']()}</span
+			>{/if}
 	</p>
 	<h2 class="signage text-xl leading-snug font-semibold text-balance">{commit.subject}</h2>
 	{#each paragraphs as paragraph (paragraph)}
@@ -45,26 +48,25 @@
 	{/each}
 	<div class="flex flex-wrap gap-1.5">
 		{#if isHead}<button type="button" class="btn btn-sm"
-				><GitCommitHorizontal class="size-4" aria-hidden="true" />Amend</button
+				><GitCommitHorizontal class="size-4" aria-hidden="true" />{m['commit.amend']()}</button
 			>{/if}
 		<button type="button" class="btn btn-sm"
-			><PencilLine class="size-4" aria-hidden="true" />Reword</button
+			><PencilLine class="size-4" aria-hidden="true" />{m['commit.reword']()}</button
 		>
 		<button type="button" class="btn btn-sm"
-			><Cherry class="size-4" aria-hidden="true" />Cherry-pick</button
+			><Cherry class="size-4" aria-hidden="true" />{m['commit.cherry_pick']()}</button
 		>
 		<button type="button" class="btn btn-sm"
-			><RotateCcw class="size-4" aria-hidden="true" />Revert</button
+			><RotateCcw class="size-4" aria-hidden="true" />{m['commit.revert']()}</button
 		>
 		<button type="button" class="btn btn-sm"
-			><ListRestart class="size-4" aria-hidden="true" />Rebase from here</button
+			><ListRestart class="size-4" aria-hidden="true" />{m['commit.rebase_here']()}</button
 		>
 	</div>
 	{#await files then changed}
 		{#if changed.length}
 			<h3 class="mt-3 caps text-base-content/70">
-				{changed.length}
-				{changed.length === 1 ? 'file' : 'files'} changed
+				{m['commit.changed']({ count: changed.length })}
 			</h3>
 			<ul>
 				{#each changed as file (file.path)}
@@ -76,13 +78,11 @@
 				{/each}
 			</ul>
 		{:else if commit.parents.length > 1}
-			<p class="mt-3 text-base-content/70">
-				This merge brought the two lines together without changes of its own.
-			</p>
+			<p class="mt-3 text-base-content/70">{m['commit.merge_note']()}</p>
 		{:else}
-			<p class="mt-3 text-base-content/70">This commit changed no files.</p>
+			<p class="mt-3 text-base-content/70">{m['commit.no_files']()}</p>
 		{/if}
 	{:catch reason}
-		<p role="alert" class="mt-3 text-error">The changed files could not be read: {reason}</p>
+		<p role="alert" class="mt-3 text-error">{m['commit.files_failed']({ reason })}</p>
 	{/await}
 </article>

@@ -5,6 +5,7 @@ import type { Changed } from '#lib/bindings/Changed.ts';
 import type { Progress } from '#lib/bindings/Progress.ts';
 import type { ViewInfo } from '#lib/bindings/ViewInfo.ts';
 import { locate as repoLocate, window as repoWindow, type RepoDatabase } from '#lib/db/repo.ts';
+import { m } from '#lib/paraglide/messages.js';
 import {
 	commitFiles,
 	layoutWindow,
@@ -47,9 +48,9 @@ export class RepoSession {
 		if (!this.changes.length) return commits;
 		const working: Commit = {
 			hash: WORKING,
-			subject: `Working changes · ${this.changes.length} ${this.changes.length === 1 ? 'file' : 'files'}, not committed`,
+			subject: m['commit.uncommitted']({ count: this.changes.length }),
 			author: '',
-			when: 'now',
+			when: m['history.now'](),
 			line: this.headLine,
 			parents: [this.head],
 			pushed: false,
@@ -135,9 +136,9 @@ export class RepoSession {
 				: this.#listed;
 			return layoutWindow(listed, this.trunk, from, to);
 		}
-		if (!this.#db) throw new Error('This repository’s cache is not open.');
+		if (!this.#db) throw new Error(m['error.cache_closed']());
 		const view = only.length ? await materializeView(this.repoId, only) : this.view;
-		if (!view) throw new Error('This repository’s history is not laid out yet.');
+		if (!view) throw new Error(m['error.history_not_laid']());
 		const { rows, edges } = await repoWindow(this.#db, view, from, to);
 		const now = Date.now();
 		return {
@@ -165,7 +166,7 @@ export class RepoSession {
 			subject,
 			body: body || undefined,
 			author: this.user,
-			when: 'now',
+			when: m['history.now'](),
 			line: this.headLine,
 			parents: [this.head],
 			pushed: false,

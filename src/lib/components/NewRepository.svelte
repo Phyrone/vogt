@@ -3,6 +3,7 @@
 	import X from '@lucide/svelte/icons/x';
 	import { goto, invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { m } from '#lib/paraglide/messages.js';
 	import { addRepo, pickDirectory, REGISTRY } from '#lib/registry/api.ts';
 	import { createRepository } from '#lib/repo/create.ts';
 
@@ -51,8 +52,8 @@
 	<form id="new-repository" class="min-w-0 py-2" onsubmit={create}>
 		<input
 			class="w-full bg-transparent signage text-base leading-tight placeholder:font-semibold placeholder:text-base-content/55 focus-visible:outline-none"
-			placeholder="Name the new repository"
-			aria-label="Name of the new repository"
+			placeholder={m['workspace.name_placeholder']()}
+			aria-label={m['workspace.name_label']()}
 			aria-describedby={failure ? 'new-repository-failure' : undefined}
 			autocomplete="off"
 			spellcheck="false"
@@ -70,7 +71,7 @@
 					'cursor-pointer truncate underline decoration-dotted underline-offset-2 hover:text-base-content hover:decoration-solid',
 					!location && 'font-sans'
 				]}
-				onclick={choose}>{location || 'Choose where to put it'}</button
+				onclick={choose}>{location || m['workspace.choose_location']()}</button
 			>{#if location}<span class="shrink-0">/{name.trim() || '…'}</span>{/if}
 		</p>
 	</form>
@@ -81,13 +82,13 @@
 			class="btn btn-neutral btn-sm"
 			disabled={!name.trim() || creating}
 			>{#if creating}<span class="loading loading-xs loading-spinner" aria-hidden="true"
-				></span>{/if}Create</button
+				></span>{/if}{m['common.create']()}</button
 		>
 		<button
 			type="button"
 			class="btn btn-square btn-ghost btn-sm"
-			title="Cancel"
-			aria-label="Cancel the new repository"
+			title={m['common.cancel']()}
+			aria-label={m['workspace.cancel_new']()}
 			onclick={oncancel}><X class="size-4" aria-hidden="true" /></button
 		>
 	</div>

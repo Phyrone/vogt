@@ -4,6 +4,7 @@ import type { PredefinedMenuItemOptions } from '@tauri-apps/api/menu';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
+import { m } from '#lib/paraglide/messages.js';
 import { appVersion, openExternal } from './settings/system.ts';
 import { windowChrome } from './window.svelte.ts';
 
@@ -21,19 +22,20 @@ function predefined(item: PredefinedMenuItemOptions['item']) {
  * The native window menu. macOS gets the app menu in the system menu bar; Windows
  * and Linux get a menu bar on the window. Settings opens the app's settings page;
  * a repository's settings are reached from its sidebar or the title-bar dropdown.
+ * The interface rebuilds it when the language changes.
  */
 export async function installMenu(): Promise<void> {
 	if (!isTauri()) return;
 
 	const settings = await MenuItem.new({
 		id: 'settings',
-		text: 'Settings…',
+		text: m['menu.settings'](),
 		accelerator: 'CmdOrCtrl+,',
 		action: () => void goto(resolve('/settings'))
 	});
 	const github = await MenuItem.new({
 		id: 'github',
-		text: 'VOGT on GitHub',
+		text: m['menu.github'](),
 		action: () => void openExternal(REPOSITORY)
 	});
 
@@ -65,7 +67,7 @@ async function macMenu(settings: MenuItem, github: MenuItem) {
 		]
 	});
 	const edit = await Submenu.new({
-		text: 'Edit',
+		text: m['menu.edit'](),
 		items: [
 			await predefined('Undo'),
 			await predefined('Redo'),
@@ -76,9 +78,12 @@ async function macMenu(settings: MenuItem, github: MenuItem) {
 			await predefined('SelectAll')
 		]
 	});
-	const view = await Submenu.new({ text: 'View', items: [await predefined('Fullscreen')] });
+	const view = await Submenu.new({
+		text: m['menu.view'](),
+		items: [await predefined('Fullscreen')]
+	});
 	const window = await Submenu.new({
-		text: 'Window',
+		text: m['menu.window'](),
 		items: [
 			await predefined('Minimize'),
 			await predefined('Maximize'),
@@ -87,7 +92,7 @@ async function macMenu(settings: MenuItem, github: MenuItem) {
 		]
 	});
 	await window.setAsWindowsMenuForNSApp();
-	const help = await Submenu.new({ text: 'Help', items: [github] });
+	const help = await Submenu.new({ text: m['menu.help'](), items: [github] });
 	await help.setAsHelpMenuForNSApp();
 	return [app, edit, view, window, help];
 }
@@ -96,19 +101,19 @@ async function macMenu(settings: MenuItem, github: MenuItem) {
 async function desktopMenu(settings: MenuItem, github: MenuItem) {
 	const appWindow = getCurrentWindow();
 	const file = await Submenu.new({
-		text: 'File',
+		text: m['menu.file'](),
 		items: [
 			settings,
 			await separator(),
 			await MenuItem.new({
 				id: 'exit',
-				text: 'Exit',
+				text: m['menu.exit'](),
 				action: () => void appWindow.close()
 			})
 		]
 	});
 	const edit = await Submenu.new({
-		text: 'Edit',
+		text: m['menu.edit'](),
 		items: [
 			await predefined('Cut'),
 			await predefined('Copy'),
@@ -117,25 +122,25 @@ async function desktopMenu(settings: MenuItem, github: MenuItem) {
 		]
 	});
 	const window = await Submenu.new({
-		text: 'Window',
+		text: m['menu.window'](),
 		items: [
 			await MenuItem.new({
 				id: 'minimize',
-				text: 'Minimize',
+				text: m['common.minimize'](),
 				action: () => void appWindow.minimize()
 			}),
 			await MenuItem.new({
 				id: 'maximize',
-				text: 'Maximize',
+				text: m['common.maximize'](),
 				action: () => void appWindow.toggleMaximize()
 			}),
 			await MenuItem.new({
 				id: 'close',
-				text: 'Close Window',
+				text: m['menu.close_window'](),
 				action: () => void appWindow.close()
 			})
 		]
 	});
-	const help = await Submenu.new({ text: 'Help', items: [github] });
+	const help = await Submenu.new({ text: m['menu.help'](), items: [github] });
 	return [file, edit, window, help];
 }

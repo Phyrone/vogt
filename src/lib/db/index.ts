@@ -1,6 +1,7 @@
 import Database from '@tauri-apps/plugin-sql';
 import { drizzle } from 'drizzle-orm/sqlite-proxy';
 import type { RemoteCallback } from 'drizzle-orm/sqlite-proxy';
+import { m } from '#lib/paraglide/messages.js';
 import * as schema from './schema.ts';
 
 let sqlite: Database | undefined;
@@ -33,7 +34,7 @@ export function proxy(sqlite: Database): RemoteCallback {
 
 export const db = drizzle(
 	async (sql, params, method) => {
-		if (!sqlite) throw new Error('The database is not open');
+		if (!sqlite) throw new Error(m['error.database_closed']());
 		return proxy(sqlite)(sql, params, method);
 	},
 	{ schema }

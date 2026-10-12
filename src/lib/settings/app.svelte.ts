@@ -43,21 +43,11 @@ export const THEMES = [
 /** The stored choice that follows the system; the document gets no theme attribute then. */
 export const SYSTEM = 'system';
 
-/** The languages the interface will speak; translations arrive with the localisation work. */
-export const LANGUAGES = [
-	{ id: 'en', name: 'English' },
-	{ id: 'de', name: 'Deutsch' }
-] as const;
-
 /** The themes a stored value may name. */
 export const themeChoice = z.enum([...THEMES, SYSTEM]);
-/** The languages a stored value may name. */
-export const localeChoice = z.enum(LANGUAGES.map((language) => language.id));
 
 /** A theme the document may carry, or {@link SYSTEM}. */
 export type Theme = z.infer<typeof themeChoice>;
-/** A language the interface may be set to. */
-export type Locale = z.infer<typeof localeChoice>;
 
 /** Keeps the stored format a plain string and falls back when storage holds something else. */
 function stored<T extends string>(schema: z.ZodType<T>, fallback: T) {
@@ -71,9 +61,4 @@ function stored<T extends string>(schema: z.ZodType<T>, fallback: T) {
 /** The active daisyUI theme, or {@link SYSTEM}. */
 export const theme = new PersistedState<Theme>('vogt:theme', SYSTEM, {
 	serializer: stored<Theme>(themeChoice, SYSTEM)
-});
-
-/** The interface language. */
-export const locale = new PersistedState<Locale>('vogt:locale', 'en', {
-	serializer: stored<Locale>(localeChoice, 'en')
 });

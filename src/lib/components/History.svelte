@@ -4,6 +4,7 @@
 	import { SvelteMap } from 'svelte/reactivity';
 	import type { Progress } from '#lib/bindings/Progress.ts';
 	import { graphWidth, MAX_LANES, PITCH } from '#lib/graph/layout.ts';
+	import { m } from '#lib/paraglide/messages.js';
 	import {
 		lineOf,
 		lineStyle,
@@ -185,15 +186,15 @@
 	}
 </script>
 
-<section class="@container flex min-w-0 flex-1 flex-col" aria-label="History">
+<section class="@container flex min-w-0 flex-1 flex-col" aria-label={m['history.title']()}>
 	<div
 		class="flex h-8 shrink-0 items-center gap-3 border-b border-base-300 pr-4 caps text-base-content/70"
 	>
-		<span class="shrink-0 pl-4" style:width="{graph}px">Graph</span>
-		<span class="min-w-0 flex-1">Commit</span>
-		<span class="hidden w-20 shrink-0 @2xl:block">Author</span>
-		<span class="hidden w-16 shrink-0 @2xl:block">Hash</span>
-		<span class="hidden w-20 shrink-0 text-right @lg:block">When</span>
+		<span class="shrink-0 pl-4" style:width="{graph}px">{m['history.graph']()}</span>
+		<span class="min-w-0 flex-1">{m['history.commit']()}</span>
+		<span class="hidden w-20 shrink-0 @2xl:block">{m['history.author']()}</span>
+		<span class="hidden w-16 shrink-0 @2xl:block">{m['history.hash']()}</span>
+		<span class="hidden w-20 shrink-0 text-right @lg:block">{m['history.when']()}</span>
 	</div>
 	{#if !source.progress.complete}
 		<div
@@ -202,7 +203,7 @@
 		>
 			<span class="loading loading-xs loading-spinner" aria-hidden="true"></span>
 			<span class="text-xs text-base-content/70">
-				Reading the history — {source.progress.indexed.toLocaleString()} commits so far
+				{m['history.reading']({ count: source.progress.indexed })}
 			</span>
 		</div>
 	{/if}
@@ -210,9 +211,9 @@
 		<div
 			class="flex h-9 shrink-0 items-center gap-3 border-b border-base-300 bg-base-200 pr-2 pl-4"
 			role="group"
-			aria-label="Branches shown"
+			aria-label={m['history.shown']()}
 		>
-			<span class="shrink-0 caps text-base-content/70">Only</span>
+			<span class="shrink-0 caps text-base-content/70">{m['history.only']()}</span>
 			<span class="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
 				{#each picked as id (id)}
 					{@const line = lineOf(lines, id)}
@@ -226,25 +227,25 @@
 					type="button"
 					class={['btn join-item btn-xs', !hide && 'btn-neutral']}
 					aria-pressed={!hide}
-					onclick={() => (hide = false)}>Dim the rest</button
+					onclick={() => (hide = false)}>{m['history.dim_rest']()}</button
 				>
 				<button
 					type="button"
 					class={['btn join-item btn-xs', hide && 'btn-neutral']}
 					aria-pressed={hide}
-					onclick={() => (hide = true)}>Hide the rest</button
+					onclick={() => (hide = true)}>{m['history.hide_rest']()}</button
 				>
 			</div>
 			<button type="button" class="btn shrink-0 btn-ghost btn-xs" onclick={() => (picked = [])}
-				><X class="size-3.5" aria-hidden="true" />Show all</button
+				><X class="size-3.5" aria-hidden="true" />{m['history.show_all']()}</button
 			>
 		</div>
 	{/if}
 	{#if failure}
-		<p role="alert" class="p-6 text-error">The history could not be read: {failure}</p>
+		<p role="alert" class="p-6 text-error">{m['history.failed']({ reason: failure })}</p>
 	{:else if !total && chunks.has(0) && source.progress.complete}
 		<p class="p-6 text-base-content/70">
-			{only.length ? 'No commits were made on these branches themselves.' : 'No commits yet.'}
+			{only.length ? m['history.none_on']() : m['history.none']()}
 		</p>
 	{/if}
 	<div class="min-h-0 flex-1 overflow-y-auto" bind:this={scroller}>
@@ -286,14 +287,14 @@
 								<span class="flex min-w-0 flex-1 items-center gap-2">
 									{#if commit.hash === head}
 										<span class="badge shrink-0 signage badge-sm tracking-wider badge-neutral"
-											>HERE</span
+											>{m['history.here']()}</span
 										>
 									{/if}
 									{#each commit.refs ?? [] as ref (ref.label)}
 										<span class="badge shrink-0 badge-outline signage badge-sm">{ref.label}</span>
 									{/each}
 									<span class="truncate">{commit.subject}</span>
-									<span class="sr-only">on {line.name}</span>
+									<span class="sr-only">{m['history.on_line']({ line: line.name })}</span>
 								</span>
 								<span
 									class="hidden w-20 shrink-0 truncate font-normal text-base-content/70 @2xl:block"

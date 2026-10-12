@@ -1,6 +1,7 @@
 import { expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
+import { m } from '#lib/paraglide/messages.js';
 import type { HistoryRow, HistoryWindow, Line } from '#lib/repo/types.ts';
 import History from './History.svelte';
 
@@ -47,5 +48,7 @@ test('a row whose line has not arrived yet renders without an error', async () =
 	await expect.element(page.getByText('commit a')).toBeInTheDocument();
 	await expect.element(page.getByText('commit b')).toBeInTheDocument();
 	// the missing line shows its fallback name instead of crashing
-	await expect.element(page.getByText('on fresh-branch')).toBeInTheDocument();
+	await expect
+		.element(page.getByText(m['history.on_line']({ line: 'fresh-branch' })))
+		.toBeInTheDocument();
 });

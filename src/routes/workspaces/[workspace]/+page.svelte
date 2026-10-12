@@ -7,6 +7,7 @@
 	import { resolve } from '$app/paths';
 	import NewRepository from '#lib/components/NewRepository.svelte';
 	import Toolbar from '#lib/components/Toolbar.svelte';
+	import { m } from '#lib/paraglide/messages.js';
 	import { addRepo, pickDirectory, REGISTRY, removeRepo } from '#lib/registry/api.ts';
 
 	let { data } = $props();
@@ -55,10 +56,10 @@
 					class={['btn btn-sm', drafting && 'btn-active']}
 					aria-expanded={drafting}
 					onclick={() => (drafting = !drafting)}
-					><Plus class="size-4" aria-hidden="true" />New repository</button
+					><Plus class="size-4" aria-hidden="true" />{m['workspace.new_repository']()}</button
 				>
 				<button type="button" class="btn btn-neutral btn-sm" onclick={add}
-					><FolderOpen class="size-4" aria-hidden="true" />Add existing folder</button
+					><FolderOpen class="size-4" aria-hidden="true" />{m['workspace.add_existing']()}</button
 				>
 			</div>
 		</div>
@@ -66,7 +67,10 @@
 			<div role="alert" class="alert alert-soft alert-error">{failure}</div>
 		{/if}
 		{#if workspace.repos.length || drafting}
-			<ul class="list rounded-box border border-base-300" aria-label="Repositories">
+			<ul
+				class="list rounded-box border border-base-300"
+				aria-label={m['workspace.repositories']()}
+			>
 				{#if drafting}
 					<NewRepository workspace={workspace.id} oncancel={() => (drafting = false)} />
 				{/if}
@@ -86,8 +90,8 @@
 						<button
 							type="button"
 							class="btn btn-square btn-ghost btn-sm"
-							title="Remove from workspace"
-							aria-label="Remove {repo.name} from workspace"
+							title={m['common.remove_from_workspace']()}
+							aria-label={m['common.remove_named_from_workspace']({ name: repo.name })}
 							onclick={() => remove(repo.id)}><X class="size-4" aria-hidden="true" /></button
 						>
 					</li>
@@ -97,8 +101,7 @@
 			<p
 				class="rounded-box border border-dashed border-base-300 px-6 py-10 text-center text-balance"
 			>
-				No repositories in this workspace yet. Add a folder you already work in, or start a new
-				repository from nothing.
+				{m['workspace.empty']()}
 			</p>
 		{/if}
 	</div>

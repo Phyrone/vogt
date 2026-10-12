@@ -88,8 +88,18 @@ test('opens the app settings from the window menu and remembers the choices', as
 
 	await page.getByLabel('Theme').selectOption('nord');
 	await expect(page.locator('html')).toHaveAttribute('data-theme', 'nord');
+
+	// picking a language reloads the document, so every message is drawn in the new one
 	await page.getByLabel('Language').selectOption('de');
 	await expect(page.locator('html')).toHaveAttribute('lang', 'de');
+	await expect(page.getByRole('heading', { level: 1, name: 'Einstellungen' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Darstellung' })).toBeVisible();
+
+	// and the choices are still there after another reload
+	await page.reload();
+	await expect(page.locator('html')).toHaveAttribute('lang', 'de');
+	await expect(page.locator('html')).toHaveAttribute('data-theme', 'nord');
+	await expect(page.getByRole('heading', { level: 1, name: 'Einstellungen' })).toBeVisible();
 });
 
 test('the settings that need the desktop app say so', async ({ page }) => {
