@@ -175,14 +175,20 @@ async fn start<R: tauri::Runtime>(
 fn watch(repo: &Arc<Repo>) -> Result<notify::RecommendedWatcher, String> {
     let (gitdir, commondir) = history::git_dirs(&repo.path).map_err(history::open_error)?;
     let repo = repo.clone();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        let Ok(event) = event else { return };
-        if !relevant(&event.paths) {
-            return;
-        }
-        repo.dirty.store(true, Ordering::SeqCst);
-        repo.wake.notify_one();
-    })
+    let mut watcher = notify::RecommendedWatcher::new(
+        move |event: notify::Result<notify::Event>| {
+            let Ok(event) = event else { return };
+            if !relevant(&event) {
+                return;
+            }
+            repo.dirty.store(true, Ordering::SeqCst);
+            repo.wake.notify_one();
+        },
+        // a ref is a file, never a link to a directory; following one would
+        // let a `.git` that links `refs/x` to the home directory have a watch
+        // added for every directory under it
+        notify::Config::default().with_follow_symlinks(false),
+    )
     .map_err(|e| e.to_string())?;
     let mut watch = |dir: PathBuf, recursive: bool| -> Result<(), String> {
         if dir.exists() {
@@ -209,13 +215,20 @@ fn watch(repo: &Arc<Repo>) -> Result<notify::RecommendedWatcher, String> {
     Ok(watcher)
 }
 
-/// Whether a change to `paths` can move a ref or HEAD. An editor rewrites
+/// Whether `event` can move a ref or HEAD. Reading a file is no change: the
+/// inotify backend reports every open, and a sync reads the refs, so letting
+/// those through would have each sync wake the next. An editor rewrites
 /// `.git/index` and `.git/index.lock` on every `git status`, which is not
-/// worth a sync; a ref update arrives as the rename onto its final name. An
-/// event without paths is a rescan signal and is always relevant.
-fn relevant(paths: &[PathBuf]) -> bool {
-    paths.is_empty()
-        || paths.iter().any(|path| {
+/// worth a sync; a ref update arrives as the rename onto its final name. A
+/// rescan signal, or an event without paths, is always relevant, and so is a
+/// kind the backend could not tell.
+fn relevant(event: &notify::Event) -> bool {
+    if matches!(event.kind, notify::EventKind::Access(_)) {
+        return false;
+    }
+    event.need_rescan()
+        || event.paths.is_empty()
+        || event.paths.iter().any(|path| {
             let name = path
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -1404,19 +1417,111 @@ mod tests {
         });
     }
 
+    /// A change of `kind` to `paths`.
+    fn event(kind: notify::EventKind, paths: &[PathBuf]) -> notify::Event {
+        paths.iter().fold(notify::Event::new(kind), |event, path| {
+            event.add_path(path.clone())
+        })
+    }
+
     #[test]
     fn the_watcher_ignores_index_churn() {
+        use notify::event::{CreateKind, EventKind, ModifyKind, RenameMode};
+        let renamed = |paths: &[PathBuf]| {
+            relevant(&event(
+                EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
+                paths,
+            ))
+        };
         let git = Path::new("/repo/.git");
-        assert!(!relevant(&[git.join("index")]));
-        assert!(!relevant(&[git.join("index.lock")]));
-        assert!(!relevant(&[git.join("index"), git.join("index.lock")]));
-        assert!(relevant(&[git.join("HEAD")]));
-        assert!(relevant(&[git.join("packed-refs")]));
-        assert!(relevant(&[git.join("refs/heads/main")]));
+        assert!(!renamed(&[git.join("index")]));
+        assert!(!renamed(&[git.join("index.lock")]));
+        assert!(!renamed(&[git.join("index"), git.join("index.lock")]));
+        assert!(renamed(&[git.join("HEAD")]));
+        assert!(renamed(&[git.join("packed-refs")]));
+        assert!(renamed(&[git.join("refs/heads/main")]));
+        assert!(relevant(&event(
+            EventKind::Create(CreateKind::File),
+            &[git.join("refs/tags/v1")]
+        )));
         // one relevant path is enough
-        assert!(relevant(&[git.join("index"), git.join("refs/heads/main")]));
+        assert!(renamed(&[git.join("index"), git.join("refs/heads/main")]));
         // an event without paths is a rescan signal, never ignorable
-        assert!(relevant(&[]));
+        assert!(relevant(&event(EventKind::Any, &[])));
+        assert!(relevant(
+            &event(EventKind::Other, &[]).set_flag(notify::event::Flag::Rescan)
+        ));
+    }
+
+    #[test]
+    fn the_watcher_ignores_reads() {
+        use notify::event::{AccessKind, AccessMode, EventKind};
+        let head = [PathBuf::from("/repo/.git/refs/heads/main")];
+        // what the inotify backend reports when a sync reads the refs
+        assert!(!relevant(&event(
+            EventKind::Access(AccessKind::Open(AccessMode::Any)),
+            &head
+        )));
+        assert!(!relevant(&event(
+            EventKind::Access(AccessKind::Close(AccessMode::Read)),
+            &head
+        )));
+    }
+
+    /// An entry for `dir` with its watch on, and nothing heard yet.
+    #[cfg(target_os = "linux")]
+    async fn watched(dir: &Path) -> (Arc<Repo>, notify::RecommendedWatcher) {
+        let cache = Cache {
+            file: dir.join("unused.db"),
+            pool: pool().await,
+        };
+        let repo = Arc::new(Repo::new(REAL.into(), dir.to_owned(), cache));
+        let watcher = watch(&repo).unwrap();
+        // adding the recursive watches opens the directories they cover
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        repo.dirty.store(false, Ordering::SeqCst);
+        (repo, watcher)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reading_the_refs_does_not_wake_the_worker() {
+        tauri::async_runtime::block_on(async {
+            let (dir, repo, _refs) = repository("reads", 2);
+            let (entry, _watcher) = watched(&dir).await;
+
+            // what every sync does first
+            history::refs(&dir).unwrap();
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            assert!(!entry.dirty.load(Ordering::SeqCst));
+
+            // while a new commit still does
+            let tip = repo.head().unwrap().target().unwrap();
+            commit(&repo, "more", &[tip]);
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            assert!(entry.dirty.load(Ordering::SeqCst));
+
+            std::fs::remove_dir_all(dir).unwrap();
+        });
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_watcher_does_not_follow_a_linked_directory() {
+        tauri::async_runtime::block_on(async {
+            let (dir, _repo, _refs) = repository("linked", 1);
+            let outside = scratch("linked-outside");
+            std::fs::create_dir_all(outside.join("deep")).unwrap();
+            std::os::unix::fs::symlink(&outside, dir.join(".git/refs/x")).unwrap();
+            let (entry, _watcher) = watched(&dir).await;
+
+            std::fs::write(outside.join("deep/file"), "changed").unwrap();
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            assert!(!entry.dirty.load(Ordering::SeqCst));
+
+            std::fs::remove_dir_all(dir).unwrap();
+            std::fs::remove_dir_all(outside).unwrap();
+        });
     }
 
     #[test]
