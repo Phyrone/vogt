@@ -1,0 +1,33 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT \"from\", \"to\", line, points FROM edge",
+	"describe": {
+		"columns": [
+			{
+				"name": "from",
+				"ordinal": 0,
+				"type_info": "Integer"
+			},
+			{
+				"name": "to",
+				"ordinal": 1,
+				"type_info": "Integer"
+			},
+			{
+				"name": "line",
+				"ordinal": 2,
+				"type_info": "Text"
+			},
+			{
+				"name": "points",
+				"ordinal": 3,
+				"type_info": "Text"
+			}
+		],
+		"parameters": {
+			"Right": 0
+		},
+		"nullable": [false, false, false, false]
+	},
+	"hash": "5d4a568cb8957c6a9e875ef692da4d2db4eb1d387a97fc8e215cbc005b93b20c"
+}

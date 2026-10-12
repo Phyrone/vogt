@@ -538,11 +538,6 @@ pub async fn materialize(
         version,
         &rows,
         &edges,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    cache::set_meta(
-        pool,
         &[
             (
                 "lines",
@@ -595,14 +590,24 @@ pub async fn materialize_mask(
         .await
         .map_err(|e| e.to_string())?
         .unwrap_or_default();
-    let line_index: HashMap<&str, usize> = lines
-        .iter()
-        .enumerate()
-        .map(|(index, line)| (line.id.as_str(), index))
-        .collect();
     // the picked rows keep the order they had in the unmasked view
     let mut picked: Vec<&_> = rows.iter().collect();
     picked.sort_by_key(|row| row.row);
+    // a row on a line the list does not hold gets a line of its own rather
+    // than borrowing another's; the list is written with the rows, so only a
+    // cache that lost its `lines` entry has such a row
+    let mut ids: Vec<&str> = lines.iter().map(|line| line.id.as_str()).collect();
+    let mut line_index: HashMap<&str, usize> = ids
+        .iter()
+        .enumerate()
+        .map(|(index, id)| (*id, index))
+        .collect();
+    for row in &picked {
+        line_index.entry(row.line.as_str()).or_insert_with(|| {
+            ids.push(row.line.as_str());
+            ids.len() - 1
+        });
+    }
 
     let hashes: Vec<&str> = picked.iter().map(|row| row.hash.as_str()).collect();
     let mut parents: HashMap<String, Vec<String>> = HashMap::new();
@@ -630,7 +635,7 @@ pub async fn materialize_mask(
     let stations: Vec<Station> = picked
         .iter()
         .map(|found| Station {
-            line: *line_index.get(found.line.as_str()).unwrap_or(&0),
+            line: line_index[found.line.as_str()],
             parents: parents
                 .get(found.hash.as_str())
                 .map(Vec::as_slice)
@@ -640,11 +645,8 @@ pub async fn materialize_mask(
                 .collect(),
         })
         .collect();
-    let trunk = lines
-        .iter()
-        .position(|line| line.id == trunk)
-        .unwrap_or(lines.len());
-    let layout = layout::layout(&stations, lines.len(), trunk);
+    let trunk = ids.iter().position(|id| *id == trunk).unwrap_or(ids.len());
+    let layout = layout::layout(&stations, ids.len(), trunk);
 
     let nodes: Vec<NodeRow> = picked
         .iter()
@@ -664,7 +666,7 @@ pub async fn materialize_mask(
         .map(|edge| EdgeRow {
             from: edge.from as i64,
             to: edge.to as i64,
-            line: lines[edge.line].id.clone(),
+            line: ids[edge.line].to_owned(),
             points: serde_json::to_string(&edge.points).unwrap_or_default(),
         })
         .collect();
@@ -677,6 +679,7 @@ pub async fn materialize_mask(
         version,
         &nodes,
         &edges,
+        &[],
     )
     .await
     .map_err(|e| e.to_string())?;
@@ -1257,6 +1260,36 @@ mod tests {
                     .await
                     .unwrap();
             assert_eq!((views, nodes, edges), (0, 0, 0), "a mask is left over");
+            std::fs::remove_dir_all(dir).unwrap();
+        });
+    }
+
+    #[test]
+    fn a_mask_lays_out_rows_whose_line_the_list_does_not_hold() {
+        tauri::async_runtime::block_on(async {
+            let dir = scratch("unknown-line");
+            let repo = init(&dir);
+            let root = commit(&repo, "main", "root", "a\n", &[]);
+            let next = commit(&repo, "main", "next", "b\n", &[root]);
+            let pool = cache_pool(&dir, &[root, next]).await;
+            materialize(&pool, &refs(&dir).unwrap(), 1).await.unwrap();
+            // the rows are written together with their line list; a cache that
+            // lost the list must not take the layout down with it
+            cache::set_meta(&pool, &[("lines", "[]".into())])
+                .await
+                .unwrap();
+
+            let masked = materialize_mask(&pool, &["main".into()], 1).await.unwrap();
+
+            assert_eq!(masked.total, 2);
+            let lines = sqlx::query_scalar!(
+                "SELECT DISTINCT line FROM edge WHERE view_id = ?",
+                masked.id
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+            assert_eq!(lines, ["main"]);
             std::fs::remove_dir_all(dir).unwrap();
         });
     }

@@ -373,6 +373,14 @@ pub async fn meta(pool: &Pool<Sqlite>, key: &str) -> Result<Option<String>, sqlx
 /// Writes `entries` into the `meta` table.
 pub async fn set_meta(pool: &Pool<Sqlite>, entries: &[(&str, String)]) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await?;
+    write_meta(&mut transaction, entries).await?;
+    transaction.commit().await
+}
+
+async fn write_meta(
+    connection: &mut SqliteConnection,
+    entries: &[(&str, String)],
+) -> Result<(), sqlx::Error> {
     for (key, value) in entries {
         sqlx::query!(
             "INSERT INTO meta (key, value) VALUES (?, ?)
@@ -380,10 +388,10 @@ pub async fn set_meta(pool: &Pool<Sqlite>, entries: &[(&str, String)]) -> Result
             key,
             value
         )
-        .execute(&mut *transaction)
+        .execute(&mut *connection)
         .await?;
     }
-    transaction.commit().await
+    Ok(())
 }
 
 /// One commit as a row of a view: where it sits in the list and in the graph.
@@ -406,8 +414,10 @@ pub struct EdgeRow {
     pub points: String,
 }
 
-/// Replaces the laid-out rows and edges of a view, and records the view's
-/// size, in one transaction; readers see the old view until it commits.
+/// Replaces the laid-out rows and edges of a view, records the view's size
+/// and writes the `meta` entries that describe it, such as its line list, in
+/// one transaction; readers see the old view until it commits, and never new
+/// rows with the old lines.
 ///
 /// shortcut: the whole view is written again on every round. Most of it is
 /// unchanged, but a new commit can move lanes and lines anywhere below it, so
@@ -423,6 +433,7 @@ pub async fn save_view(
     version: i64,
     nodes: &[NodeRow],
     edges: &[EdgeRow],
+    meta: &[(&str, String)],
 ) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await?;
     sqlx::query!("DELETE FROM node WHERE view_id = ?", id)
@@ -489,6 +500,7 @@ pub async fn save_view(
             .execute(&mut *transaction)
             .await?;
     }
+    write_meta(&mut transaction, meta).await?;
     transaction.commit().await
 }
 
@@ -692,6 +704,62 @@ mod tests {
                 .unwrap();
             assert_eq!(expanded.len(), 1);
             assert_eq!(expanded[0].hash, child.hash);
+        });
+    }
+
+    #[test]
+    fn a_view_is_saved_with_its_meta() {
+        tauri::async_runtime::block_on(async {
+            let pool = pool().await;
+            let node = |row: i64, pushed| NodeRow {
+                row,
+                hash: format!("hash {row}"),
+                lane: 0,
+                line: "main".into(),
+                pushed,
+                refs: "[]".into(),
+            };
+            let edge = EdgeRow {
+                from: 0,
+                to: 1,
+                line: "main".into(),
+                points: "[[0,0]]".into(),
+            };
+            save_view(
+                &pool,
+                ViewInfo::ALL,
+                &[],
+                2,
+                1,
+                7,
+                &[node(0, false), node(1, true)],
+                std::slice::from_ref(&edge),
+                &[("lines", "[\"main\"]".into())],
+            )
+            .await
+            .unwrap();
+
+            let pushed = sqlx::query_scalar!("SELECT pushed FROM node ORDER BY row")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+            assert_eq!(pushed, [0, 1]);
+            let saved = sqlx::query!(r#"SELECT "from", "to", line, points FROM edge"#)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                (saved.from, saved.to, saved.line, saved.points),
+                (0, 1, edge.line, edge.points)
+            );
+            assert_eq!(
+                view(&pool, ViewInfo::ALL).await.unwrap().unwrap().version,
+                7
+            );
+            assert_eq!(
+                meta(&pool, "lines").await.unwrap().as_deref(),
+                Some("[\"main\"]")
+            );
         });
     }
 
