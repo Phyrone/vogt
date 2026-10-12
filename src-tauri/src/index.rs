@@ -284,24 +284,32 @@ pub async fn shutdown(repos: &Repos) {
         .drain()
         .map(|(_, repo)| repo)
         .collect();
-    // side by side, so the exit is as long as its longest cache
-    let exits: Vec<_> = open
+    // the workers stop side by side, so one in a long batch does not use up
+    // the time the others are given
+    let halts: Vec<_> = open
         .into_iter()
         .map(|repo| {
             tauri::async_runtime::spawn(async move {
-                if tokio::time::timeout(SHUTDOWN, halt(&repo)).await.is_err() {
-                    eprintln!("vogt: exiting while {} is still being indexed", repo.id);
-                    return;
-                }
-                if let Err(e) = maintenance::tend(&repo.cache.pool, Pass::Exit).await {
-                    eprintln!("vogt: tending the cache of {} failed: {e}", repo.id);
-                }
-                maintenance::close(&repo.cache.pool).await;
+                let halted = tokio::time::timeout(SHUTDOWN, halt(&repo)).await.is_ok();
+                (repo, halted)
             })
         })
         .collect();
-    for exit in exits {
-        let _ = exit.await;
+    // the passes run one after the other: a rebuild needs its file's size
+    // again in temporary space and once more in the log, and several large
+    // caches rebuilt at once would need all of that at the same time
+    for halt in halts {
+        let Ok((repo, halted)) = halt.await else {
+            continue;
+        };
+        if !halted {
+            eprintln!("vogt: exiting while {} is still being indexed", repo.id);
+            continue;
+        }
+        if let Err(e) = maintenance::tend(&repo.cache.pool, Pass::Exit).await {
+            eprintln!("vogt: tending the cache of {} failed: {e}", repo.id);
+        }
+        maintenance::close(&repo.cache.pool).await;
     }
 }
 
