@@ -1153,6 +1153,8 @@ mod tests {
                 )
                 .await
                 .unwrap();
+            // the mode `cache::open` gives a new file, which every write pays for
+            maintenance::incremental(&pool).await.unwrap();
             cache::prepare(&pool).await.unwrap();
             let path = Path::new(&path);
             let refs = history::refs(path).unwrap();
