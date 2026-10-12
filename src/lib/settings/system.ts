@@ -2,6 +2,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { appCacheDir, appConfigDir } from '@tauri-apps/api/path';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
+import { m } from '#lib/paraglide/messages.js';
 import { rebuildCaches as rebuildRegistryCaches } from '#lib/registry/api.ts';
 
 /** Whether the page runs in the desktop app, where the actions here reach the system. */
@@ -38,7 +39,7 @@ export async function rebuildCaches(): Promise<void> {
 
 /** The version this flavour's update channel offers above the running one, or null when there is none. */
 export async function checkForUpdates(): Promise<string | null> {
-	if (!desktop) throw 'Update checks need the desktop app';
+	if (!desktop) throw m['settings.needs_desktop_update']();
 	return invoke<string | null>('check_update');
 }
 

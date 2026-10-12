@@ -4,6 +4,7 @@ import type { Progress } from '#lib/bindings/Progress.ts';
 import type { ViewInfo } from '#lib/bindings/ViewInfo.ts';
 import { loadRepoDatabase, type RepoDatabase, type RepoEdge, type RepoRow } from '#lib/db/repo.ts';
 import { layoutGraph } from '#lib/graph/layout.ts';
+import { m } from '#lib/paraglide/messages.js';
 import { repository as mock } from './mock.ts';
 import {
 	LINE_COLORS,
@@ -29,12 +30,12 @@ export interface Opened {
 /** How long ago `time` was, as short as the history's When column; both in seconds since the epoch. */
 export function ago(time: number, now: number): string {
 	const minutes = Math.floor((now - time) / 60);
-	if (minutes < 1) return 'now';
-	if (minutes < 60) return `${minutes} min`;
-	if (minutes < 24 * 60) return `${Math.floor(minutes / 60)} h`;
+	if (minutes < 1) return m['history.now']();
+	if (minutes < 60) return m['history.minutes']({ count: minutes });
+	if (minutes < 24 * 60) return m['history.hours']({ count: Math.floor(minutes / 60) });
 	const days = Math.floor(minutes / (24 * 60));
-	if (days === 1) return 'yesterday';
-	if (days < 30) return `${days} d`;
+	if (days === 1) return m['history.yesterday']();
+	if (days < 30) return m['history.days']({ count: days });
 	return new Date(time * 1000).toISOString().slice(0, 10);
 }
 

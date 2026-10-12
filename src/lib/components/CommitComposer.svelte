@@ -1,5 +1,6 @@
 <script lang="ts">
 	import GitCommitHorizontal from '@lucide/svelte/icons/git-commit-horizontal';
+	import { m } from '#lib/paraglide/messages.js';
 	import { lineStyle, type FileChange, type Line } from '#lib/repo/types.ts';
 
 	interface Props {
@@ -54,11 +55,10 @@
 <form class="flex min-h-full flex-col gap-2 p-4" {onsubmit}>
 	<div class="flex items-center justify-between">
 		<h2 class="caps text-base-content/70">
-			Changes · {changes.length}
-			{changes.length === 1 ? 'file' : 'files'}
+			{m['commit.changes']({ count: changes.length })}
 		</h2>
 		<button type="button" class="btn btn-ghost btn-xs" onclick={stageAll}>
-			{staged < changes.length ? 'Stage all' : 'Unstage all'}
+			{staged < changes.length ? m['commit.stage_all']() : m['commit.unstage_all']()}
 		</button>
 	</div>
 	<ul class="mb-4">
@@ -84,7 +84,7 @@
 				<span class="flex shrink-0 items-center font-mono text-xs">
 					<select
 						class="cursor-pointer rounded-selector bg-base-200 py-1 pr-1 pl-1.5 outline-offset-0"
-						aria-label="Type"
+						aria-label={m['commit.type']()}
 						bind:value={type}
 					>
 						{#each types as t (t.name)}
@@ -97,8 +97,8 @@
 						class="bg-transparent text-center outline-none placeholder:text-base-content/50"
 						list="commit-scopes"
 						style:width="{Math.max(scope.length, 5) + 3}ch"
-						placeholder="scope"
-						aria-label="Scope"
+						placeholder={m['commit.scope_placeholder']()}
+						aria-label={m['commit.scope']()}
 						bind:value={scope}
 					/>
 					<span class="text-base-content/50" aria-hidden="true">):</span>
@@ -110,8 +110,8 @@
 			<input
 				type="text"
 				class="min-w-32 flex-1 bg-transparent font-semibold outline-none"
-				placeholder="Summary of the change"
-				aria-label="Subject"
+				placeholder={m['commit.subject_placeholder']()}
+				aria-label={m['commit.subject']()}
 				bind:value={subject}
 			/>
 			<span
@@ -123,8 +123,8 @@
 		</div>
 		<textarea
 			class="block h-24 w-full resize-none bg-transparent px-3 py-2 outline-none"
-			placeholder="Why this change was needed"
-			aria-label="Description"
+			placeholder={m['commit.body_placeholder']()}
+			aria-label={m['commit.body_label']()}
 			bind:value={body}></textarea>
 	</div>
 	<button
@@ -134,7 +134,6 @@
 		disabled={!ready}
 	>
 		<GitCommitHorizontal class="size-5" aria-hidden="true" />
-		Commit {staged}
-		{staged === 1 ? 'file' : 'files'} to {line.name}
+		{m['commit.commit_to']({ count: staged, line: line.name })}
 	</button>
 </form>

@@ -12,6 +12,7 @@
 	import Undo2 from '@lucide/svelte/icons/undo-2';
 	import { goto, invalidate } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { m } from '#lib/paraglide/messages.js';
 	import { createWorkspace, REGISTRY } from '#lib/registry/api.ts';
 	import type { Repo, Workspace } from '#lib/registry/types.ts';
 	import type { Line } from '#lib/repo/types.ts';
@@ -50,12 +51,12 @@
 <TitleBar>
 	<Switcher>
 		{#snippet label()}
-			<Layers class="size-4" aria-hidden="true" /><span class="sr-only">Workspace:</span><span
-				class="max-w-40 truncate">{workspace.name}</span
-			>
+			<Layers class="size-4" aria-hidden="true" /><span class="sr-only"
+				>{m['common.workspace_label']()}</span
+			><span class="max-w-40 truncate">{workspace.name}</span>
 		{/snippet}
 		<ul class="menu w-full p-1">
-			<li class="menu-title caps">Workspaces</li>
+			<li class="menu-title caps">{m['common.workspaces']()}</li>
 			{#each workspaces as item (item.id)}
 				<li>
 					<a
@@ -72,12 +73,12 @@
 		<form class="join w-full border-t border-base-300 p-2" onsubmit={create}>
 			<input
 				class="input join-item input-sm"
-				placeholder="New workspace"
-				aria-label="New workspace name"
+				placeholder={m['common.new_workspace']()}
+				aria-label={m['common.new_workspace_name']()}
 				required
 				bind:value={newName}
 			/>
-			<button type="submit" class="btn join-item btn-sm">Create</button>
+			<button type="submit" class="btn join-item btn-sm">{m['common.create']()}</button>
 		</form>
 	</Switcher>
 	<span class="text-base-content/40" aria-hidden="true">/</span>
@@ -87,7 +88,7 @@
 			{#if repo}
 				<h1 class="max-w-40 truncate">{repo.name}</h1>
 			{:else}
-				<span class="font-normal text-base-content/70">Open a repository</span>
+				<span class="font-normal text-base-content/70">{m['common.open_repository']()}</span>
 			{/if}
 		{/snippet}
 		<ul class="menu w-full p-1">
@@ -107,7 +108,7 @@
 			{/each}
 			<li class={[workspace.repos.length > 0 && 'mt-1 border-t border-base-300 pt-1']}>
 				<a href={resolve('/workspaces/[workspace]', { workspace: workspace.id })}
-					>All repositories</a
+					>{m['common.all_repositories']()}</a
 				>
 			</li>
 		</ul>
@@ -116,12 +117,12 @@
 		<span class="text-base-content/40" aria-hidden="true">/</span>
 		<Switcher>
 			{#snippet label()}
-				<FolderTree class="size-4" aria-hidden="true" /><span class="sr-only">Worktree:</span><span
-					class="max-w-40 truncate">{worktree.name}</span
-				>
+				<FolderTree class="size-4" aria-hidden="true" /><span class="sr-only"
+					>{m['common.worktree_label']()}</span
+				><span class="max-w-40 truncate">{worktree.name}</span>
 			{/snippet}
 			<ul class="menu w-full p-1">
-				<li class="menu-title caps">Worktrees</li>
+				<li class="menu-title caps">{m['common.worktrees']()}</li>
 				{#each worktrees as item (item.path)}
 					<li>
 						<a
@@ -133,7 +134,7 @@
 							aria-current={item.path === worktree.path ? 'true' : undefined}
 							><span class="truncate">{item.name}</span><span
 								class="ml-auto max-w-28 truncate font-mono text-xs opacity-60"
-								>{item.branch ?? 'detached'}</span
+								>{item.branch ?? m['common.detached']()}</span
 							></a
 						>
 					</li>
@@ -151,10 +152,10 @@
 		>
 		<span class="mx-2 h-6 w-px bg-base-300" data-tauri-drag-region></span>
 		<button type="button" class="btn btn-ghost btn-sm"
-			><ArrowDownToLine class="size-4" aria-hidden="true" />Pull</button
+			><ArrowDownToLine class="size-4" aria-hidden="true" />{m['common.pull']()}</button
 		>
 		<button type="button" class={['btn btn-sm', ahead > 0 ? 'btn-neutral' : 'btn-ghost']}
-			><ArrowUpFromLine class="size-4" aria-hidden="true" />Push{ahead > 0
+			><ArrowUpFromLine class="size-4" aria-hidden="true" />{m['common.push']()}{ahead > 0
 				? ` ${ahead}`
 				: ''}</button
 		>
@@ -162,25 +163,36 @@
 	{#snippet tools()}
 		{#if repo}
 			<div class="hidden items-center lg:flex">
-				<button type="button" class="btn btn-square btn-ghost btn-sm" title="Undo" aria-label="Undo"
-					><Undo2 class="size-4" aria-hidden="true" /></button
-				>
-				<button type="button" class="btn btn-square btn-ghost btn-sm" title="Redo" aria-label="Redo"
-					><Redo2 class="size-4" aria-hidden="true" /></button
+				<button
+					type="button"
+					class="btn btn-square btn-ghost btn-sm"
+					title={m['common.undo']()}
+					aria-label={m['common.undo']()}><Undo2 class="size-4" aria-hidden="true" /></button
 				>
 				<button
 					type="button"
 					class="btn btn-square btn-ghost btn-sm"
-					title="Branch"
-					aria-label="Branch"><GitBranchPlus class="size-4" aria-hidden="true" /></button
+					title={m['common.redo']()}
+					aria-label={m['common.redo']()}><Redo2 class="size-4" aria-hidden="true" /></button
 				>
 				<button
 					type="button"
 					class="btn btn-square btn-ghost btn-sm"
-					title="Stash"
-					aria-label="Stash"><Archive class="size-4" aria-hidden="true" /></button
+					title={m['common.branch']()}
+					aria-label={m['common.branch']()}
+					><GitBranchPlus class="size-4" aria-hidden="true" /></button
 				>
-				<button type="button" class="btn btn-square btn-ghost btn-sm" title="Pop" aria-label="Pop"
+				<button
+					type="button"
+					class="btn btn-square btn-ghost btn-sm"
+					title={m['common.stash']()}
+					aria-label={m['common.stash']()}><Archive class="size-4" aria-hidden="true" /></button
+				>
+				<button
+					type="button"
+					class="btn btn-square btn-ghost btn-sm"
+					title={m['common.pop']()}
+					aria-label={m['common.pop']()}
 					><ArchiveRestore class="size-4" aria-hidden="true" /></button
 				>
 			</div>

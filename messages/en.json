@@ -1,0 +1,213 @@
+{
+	"$schema": "https://inlang.com/schema/inlang-message-format",
+	"common": {
+		"ahead": "{count} ahead",
+		"all_repositories": "All repositories",
+		"app_settings": "App settings",
+		"back": "Back",
+		"branch": "Branch",
+		"cancel": "Cancel",
+		"checked_out": "checked out",
+		"close": "Close",
+		"create": "Create",
+		"detached": "detached",
+		"keyboard_shortcuts": "Keyboard shortcuts",
+		"local_only": "local only",
+		"maximize": "Maximize",
+		"minimize": "Minimize",
+		"new_workspace": "New workspace",
+		"new_workspace_name": "New workspace name",
+		"on_origin": "on origin",
+		"open": "Open",
+		"open_repository": "Open a repository",
+		"pop": "Pop",
+		"pull": "Pull",
+		"push": "Push",
+		"rebuild": "Rebuild",
+		"redo": "Redo",
+		"remove_from_workspace": "Remove from workspace",
+		"remove_named_from_workspace": "Remove {name} from workspace",
+		"repository_settings": "Repository settings",
+		"restore": "Restore",
+		"settings": "Settings",
+		"shortcuts": "Shortcuts",
+		"stash": "Stash",
+		"undo": "Undo",
+		"workspace_label": "Workspace:",
+		"workspaces": "Workspaces",
+		"worktree_label": "Worktree:",
+		"worktrees": "Worktrees"
+	},
+	"commit": {
+		"amend": "Amend",
+		"body_label": "Description",
+		"body_placeholder": "Why this change was needed",
+		"changed": [
+			{
+				"declarations": ["input count", "local countPlural = count: plural"],
+				"selectors": ["countPlural"],
+				"match": {
+					"countPlural=one": "{count} file changed",
+					"countPlural=other": "{count} files changed"
+				}
+			}
+		],
+		"changes": [
+			{
+				"declarations": ["input count", "local countPlural = count: plural"],
+				"selectors": ["countPlural"],
+				"match": {
+					"countPlural=one": "Changes · {count} file",
+					"countPlural=other": "Changes · {count} files"
+				}
+			}
+		],
+		"cherry_pick": "Cherry-pick",
+		"commit_to": [
+			{
+				"declarations": ["input count", "input line", "local countPlural = count: plural"],
+				"selectors": ["countPlural"],
+				"match": {
+					"countPlural=one": "Commit {count} file to {line}",
+					"countPlural=other": "Commit {count} files to {line}"
+				}
+			}
+		],
+		"files_failed": "The changed files could not be read: {reason}",
+		"merge_note": "This merge brought the two lines together without changes of its own.",
+		"no_files": "This commit changed no files.",
+		"not_pushed": "not pushed",
+		"rebase_here": "Rebase from here",
+		"revert": "Revert",
+		"reword": "Reword",
+		"scope": "Scope",
+		"scope_placeholder": "scope",
+		"stage_all": "Stage all",
+		"subject": "Subject",
+		"subject_placeholder": "Summary of the change",
+		"type": "Type",
+		"uncommitted": [
+			{
+				"declarations": ["input count", "local countPlural = count: plural"],
+				"selectors": ["countPlural"],
+				"match": {
+					"countPlural=one": "Working changes · {count} file, not committed",
+					"countPlural=other": "Working changes · {count} files, not committed"
+				}
+			}
+		],
+		"unstage_all": "Unstage all",
+		"working": "Working changes"
+	},
+	"error": {
+		"back_home": "Back to your workspaces",
+		"cache_closed": "This repository’s cache is not open.",
+		"database_closed": "The database is not open",
+		"history_not_laid": "This repository’s history is not laid out yet.",
+		"no_workspace": "There is no workspace to open",
+		"repo_gone": "This repository is no longer in the workspace",
+		"workspace_gone": "This workspace no longer exists"
+	},
+	"history": {
+		"also_line": "Also show {line}",
+		"author": "Author",
+		"branches": "Branches",
+		"branches_count": "{picked} of {local}",
+		"commit": "Commit",
+		"days": "{count} d",
+		"dim_rest": "Dim the rest",
+		"failed": "The history could not be read: {reason}",
+		"graph": "Graph",
+		"hash": "Hash",
+		"here": "HERE",
+		"hide_rest": "Hide the rest",
+		"hours": "{count} h",
+		"minutes": "{count} min",
+		"none": "No commits yet.",
+		"none_on": "No commits were made on these branches themselves.",
+		"now": "now",
+		"on_line": "on {line}",
+		"only": "Only",
+		"only_line": "Show only {line}",
+		"pick_aria": "Show only these branches",
+		"reading": [
+			{
+				"declarations": ["input count", "local countPlural = count: plural"],
+				"selectors": ["countPlural"],
+				"match": {
+					"countPlural=one": "Reading the history — {count: number} commit so far",
+					"countPlural=other": "Reading the history — {count: number} commits so far"
+				}
+			}
+		],
+		"show_all": "Show all",
+		"shown": "Branches shown",
+		"sidebar_aria": "Branches, stashes, tags and settings",
+		"stashes": "Stashes",
+		"stop_line": "Stop showing only {line}",
+		"tags": "Tags",
+		"title": "History",
+		"when": "When",
+		"yesterday": "yesterday"
+	},
+	"menu": {
+		"close_window": "Close Window",
+		"edit": "Edit",
+		"exit": "Exit",
+		"file": "File",
+		"github": "VOGT on GitHub",
+		"help": "Help",
+		"settings": "Settings…",
+		"view": "View",
+		"window": "Window"
+	},
+	"repository": {
+		"checked_out": "Checked out",
+		"folder": "Folder",
+		"how_it_works": "How VOGT works with this repository.",
+		"name": "Name",
+		"nothing_yet": "Nothing to set here yet",
+		"section": "Repository",
+		"templates": "Commit templates",
+		"templates_description": "This is where this repository's commit conventions will live — gitmoji or Conventional Commits — together with the other options that belong to one repository.",
+		"worktree": "Worktree"
+	},
+	"settings": {
+		"about": "About",
+		"app_data": "App data",
+		"appearance": "Appearance",
+		"check_updates": "Check for updates",
+		"clear_caches": "Clear and rebuild caches",
+		"clear_caches_description": "Drops every repository's cache and builds it again from its git directory.",
+		"install_restart": "Install and restart",
+		"installing": "Installing…",
+		"language": "Language",
+		"language_description": "The language of the interface.",
+		"needs_desktop_rebuild": "Caches can only be rebuilt in the desktop app",
+		"needs_desktop_update": "Update checks need the desktop app",
+		"repository_caches": "Repository caches",
+		"shown_by_desktop": "Shown by the desktop app.",
+		"source_issues": "Source and issues",
+		"source_issues_description": "Where VOGT is developed and reported on.",
+		"storage": "Storage",
+		"system_theme": "System theme",
+		"tagline": "Version & Operations GUI Tool — a git client.",
+		"theme": "Theme",
+		"theme_description": "Every colour in the interface comes from it.",
+		"up_to_date": "VOGT is up to date.",
+		"update_available": "VOGT {version} is available.",
+		"updates": "Updates",
+		"updates_description": "Checks for a newer version of this build."
+	},
+	"workspace": {
+		"add_existing": "Add existing folder",
+		"cancel_new": "Cancel the new repository",
+		"choose_location": "Choose where to put it",
+		"empty": "No repositories in this workspace yet. Add a folder you already work in, or start a new repository from nothing.",
+		"name_label": "Name of the new repository",
+		"name_placeholder": "Name the new repository",
+		"needs_name": "A workspace needs a name",
+		"new_repository": "New repository",
+		"repositories": "Repositories"
+	}
+}

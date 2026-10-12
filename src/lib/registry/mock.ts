@@ -1,3 +1,4 @@
+import { m } from '#lib/paraglide/messages.js';
 import type { Repo, Workspace } from './types.ts';
 
 // Stands in for the Rust registry when the page runs outside the Tauri shell.
@@ -25,14 +26,14 @@ let created = 0;
 
 function find(id: string): Workspace {
 	const workspace = workspaces.find((w) => w.id === id);
-	if (!workspace) throw 'This workspace no longer exists';
+	if (!workspace) throw m['error.workspace_gone']();
 	return workspace;
 }
 
 export const mock = {
 	listWorkspaces: (): Workspace[] => structuredClone(workspaces),
 	createWorkspace(name: string): Workspace {
-		if (!name.trim()) throw 'A workspace needs a name';
+		if (!name.trim()) throw m['workspace.needs_name']();
 		const workspace = { id: `ws-${++created}`, name: name.trim(), repos: [] };
 		workspaces.push(workspace);
 		return structuredClone(workspace);
@@ -47,7 +48,6 @@ export const mock = {
 		target.repos = target.repos.filter((r) => r.id !== repo);
 	},
 	syncRepositories: (): Promise<void> => Promise.resolve(),
-	rebuildCaches: (): Promise<void> =>
-		Promise.reject('Caches can only be rebuilt in the desktop app'),
+	rebuildCaches: (): Promise<void> => Promise.reject(m['settings.needs_desktop_rebuild']()),
 	pickDirectory: (): string => `~/code/project-${created + 1}`
 };

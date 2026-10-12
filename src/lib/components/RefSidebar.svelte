@@ -5,6 +5,7 @@
 	import Eye from '@lucide/svelte/icons/eye';
 	import Tag from '@lucide/svelte/icons/tag';
 	import type { ResolvedPathname } from '$app/types';
+	import { m } from '#lib/paraglide/messages.js';
 	import { lineStyle, type Line } from '#lib/repo/types.ts';
 
 	interface Props {
@@ -38,20 +39,23 @@
 
 <nav
 	class="flex w-14 shrink-0 flex-col border-r border-base-300 bg-base-200 lg:w-60"
-	aria-label="Branches, stashes, tags and settings"
+	aria-label={m['history.sidebar_aria']()}
 >
 	<div class="min-h-0 flex-1 overflow-y-auto pb-4">
 		<h2
 			class="hidden items-baseline justify-between px-4 pt-4 pb-1.5 caps text-base-content/60 lg:flex"
 		>
-			<span>Branches</span><span class="font-mono text-[11px] font-normal tracking-normal"
-				>{picked.length ? `${picked.length} of ${local.length}` : local.length}</span
+			<span>{m['history.branches']()}</span><span
+				class="font-mono text-[11px] font-normal tracking-normal"
+				>{picked.length
+					? m['history.branches_count']({ picked: picked.length, local: local.length })
+					: local.length}</span
 			>
 		</h2>
 		<!-- the key to the map doubles as its mask: picking branches leaves only their lines lit -->
 		<ol
 			class="relative flex flex-col gap-0.5 px-2 pt-4 before:absolute before:top-7 before:bottom-5 before:left-[25px] before:w-1.5 before:rounded-full before:bg-base-300 lg:px-3 lg:pt-1 lg:before:top-4 lg:before:left-[29px]"
-			aria-label="Show only these branches"
+			aria-label={m['history.pick_aria']()}
 		>
 			{#each local as line (line.id)}
 				{@const on = picked.includes(line.id)}
@@ -66,10 +70,10 @@
 						style={lineStyle(line)}
 						aria-pressed={on}
 						title={on
-							? `Stop showing only ${line.name}`
+							? m['history.stop_line']({ line: line.name })
 							: picked.length
-								? `Also show ${line.name}`
-								: `Show only ${line.name}`}
+								? m['history.also_line']({ line: line.name })
+								: m['history.only_line']({ line: line.name })}
 						onclick={() => toggle(line.id)}
 					>
 						<span
@@ -85,9 +89,11 @@
 								>{line.name}</span
 							>
 							<span class="block truncate text-xs text-base-content/65"
-								>{#if line.id === headLine}checked out{ahead > 0
-										? ` · ${ahead} ahead`
-										: ''}{:else if line.remote}on origin{:else}local only{/if}</span
+								>{#if line.id === headLine}{m['common.checked_out']()}{ahead > 0
+										? ` · ${m['common.ahead']({ count: ahead })}`
+										: ''}{:else if line.remote}{m['common.on_origin']()}{:else}{m[
+										'common.local_only'
+									]()}{/if}</span
 							>
 						</span>
 						{#if on}<Eye class="mr-1 hidden size-4 shrink-0 lg:block" aria-hidden="true" />{/if}
@@ -99,8 +105,8 @@
 		<h2
 			class="hidden items-baseline justify-between px-4 pt-6 pb-1.5 caps text-base-content/60 lg:flex"
 		>
-			<span>Stashes</span><span class="font-mono text-[11px] font-normal tracking-normal"
-				>{stashes.length}</span
+			<span>{m['history.stashes']()}</span><span
+				class="font-mono text-[11px] font-normal tracking-normal">{stashes.length}</span
 			>
 		</h2>
 		<ul class="menu hidden w-full gap-px menu-sm px-2 py-0 lg:flex">
@@ -118,8 +124,8 @@
 		<h2
 			class="hidden items-baseline justify-between px-4 pt-6 pb-1.5 caps text-base-content/60 lg:flex"
 		>
-			<span>Tags</span><span class="font-mono text-[11px] font-normal tracking-normal"
-				>{tags.length}</span
+			<span>{m['history.tags']()}</span><span
+				class="font-mono text-[11px] font-normal tracking-normal">{tags.length}</span
 			>
 		</h2>
 		<div class="hidden flex-wrap gap-1.5 px-4 lg:flex">
@@ -134,20 +140,20 @@
 		<a
 			class="btn btn-ghost btn-sm max-lg:btn-square lg:flex-1 lg:justify-start"
 			href={settingsHref}
-			title="Settings"
+			title={m['common.settings']()}
 		>
 			<Settings class="size-4 opacity-70" aria-hidden="true" /><span class="hidden lg:inline"
-				>Settings</span
-			><span class="sr-only lg:hidden">Settings</span>
+				>{m['common.settings']()}</span
+			><span class="sr-only lg:hidden">{m['common.settings']()}</span>
 		</a>
 		<button
 			type="button"
 			class="btn btn-ghost btn-sm max-lg:btn-square lg:flex-1 lg:justify-start"
-			title="Keyboard shortcuts"
+			title={m['common.keyboard_shortcuts']()}
 		>
 			<Keyboard class="size-4 opacity-70" aria-hidden="true" /><span class="hidden lg:inline"
-				>Shortcuts</span
-			><span class="sr-only lg:hidden">Keyboard shortcuts</span>
+				>{m['common.shortcuts']()}</span
+			><span class="sr-only lg:hidden">{m['common.keyboard_shortcuts']()}</span>
 		</button>
 	</div>
 </nav>

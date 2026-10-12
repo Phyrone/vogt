@@ -2,6 +2,7 @@
 	import FolderGit2 from '@lucide/svelte/icons/folder-git-2';
 	import Settings from '@lucide/svelte/icons/settings';
 	import { page } from '$app/state';
+	import { m } from '#lib/paraglide/messages.js';
 	import { appSettingsPath, repoSettingsPath } from '#lib/settings/links.ts';
 	import Switcher from './Switcher.svelte';
 
@@ -18,11 +19,11 @@
 	const repoBase = $derived(repoSettings?.split('?')[0] ?? null);
 </script>
 
-<Switcher align="end" title="Settings">
+<Switcher align="end" title={m['common.settings']()}>
 	{#snippet label()}
 		<Settings class="size-4" aria-hidden="true" />
-		<span class="hidden lg:inline">Settings</span>
-		<span class="sr-only lg:hidden">Settings</span>
+		<span class="hidden lg:inline">{m['common.settings']()}</span>
+		<span class="sr-only lg:hidden">{m['common.settings']()}</span>
 	{/snippet}
 	<ul class="menu w-full p-1">
 		<li>
@@ -31,7 +32,7 @@
 				class={[here === app && 'menu-active']}
 				aria-current={here === app ? 'page' : undefined}
 			>
-				<Settings class="size-4 opacity-70" aria-hidden="true" />App settings
+				<Settings class="size-4 opacity-70" aria-hidden="true" />{m['common.app_settings']()}
 			</a>
 		</li>
 		{#if repoSettings && repoBase}
@@ -41,7 +42,9 @@
 					class={[here === repoBase && 'menu-active']}
 					aria-current={here === repoBase ? 'page' : undefined}
 				>
-					<FolderGit2 class="size-4 opacity-70" aria-hidden="true" />Repository settings
+					<FolderGit2 class="size-4 opacity-70" aria-hidden="true" />{m[
+						'common.repository_settings'
+					]()}
 				</a>
 			</li>
 		{/if}

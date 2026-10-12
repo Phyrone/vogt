@@ -2,12 +2,13 @@ import { readRepository } from '#lib/repo/history.ts';
 import { RepoSession } from '#lib/repo/session.svelte.ts';
 import { listWorktrees } from '#lib/repo/worktrees.ts';
 import { error } from '@sveltejs/kit';
+import { m } from '#lib/paraglide/messages.js';
 import type { LayoutLoad } from './$types';
 
 export const load: LayoutLoad = async ({ params, parent, url }) => {
 	const { workspace } = await parent();
 	const repo = workspace.repos.find((r) => r.id === params.repo);
-	if (!repo) error(404, 'This repository is no longer in the workspace');
+	if (!repo) error(404, m['error.repo_gone']());
 	const worktrees = await listWorktrees(repo.path);
 	// ?worktree= holds a path from the listing; without it the registered directory is shown
 	const selected = url.searchParams.get('worktree');

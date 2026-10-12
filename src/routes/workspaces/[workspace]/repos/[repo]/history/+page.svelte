@@ -3,6 +3,7 @@
 	import CommitDetail from '#lib/components/CommitDetail.svelte';
 	import History from '#lib/components/History.svelte';
 	import RefSidebar from '#lib/components/RefSidebar.svelte';
+	import { m } from '#lib/paraglide/messages.js';
 	import { lineOf, type Commit } from '#lib/repo/types.ts';
 	import { repoSettingsPath } from '#lib/settings/links.ts';
 
@@ -47,7 +48,7 @@
 	</main>
 	<aside
 		class="w-64 shrink-0 overflow-y-auto border-l border-base-300 lg:w-72 xl:w-90"
-		aria-label={selected ? 'Commit' : 'Working changes'}
+		aria-label={selected ? m['history.commit']() : m['commit.working']()}
 	>
 		{#if selected}
 			<CommitDetail

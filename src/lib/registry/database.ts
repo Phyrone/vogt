@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { closeRepoDatabase } from '#lib/db/repo.ts';
 import { db } from '#lib/db/index.ts';
 import { repo, workspace } from '#lib/db/schema.ts';
+import { m } from '#lib/paraglide/messages.js';
 import type { Repo, Workspace } from './types.ts';
 
 /** What was handed to the backend about the registered repositories, one call after the other. */
@@ -34,7 +35,7 @@ export const database = {
 	},
 
 	async createWorkspace(name: string): Promise<Workspace> {
-		if (!name.trim()) throw 'A workspace needs a name';
+		if (!name.trim()) throw m['workspace.needs_name']();
 		const [created] = await db.insert(workspace).values({ name: name.trim() }).returning();
 		return { ...created!, repos: [] };
 	},

@@ -274,3 +274,10 @@ blob-report
 /.impeccable/
 # SQLite
 *.db
+# Paraglide
+src/lib/paraglide
+# inlang writes its README, .meta.json and .lix files next to the project
+# definition on every compile; only the definition itself is kept in git
+project.inlang/*
+!project.inlang/settings.json
+!project.inlang/paraglide.config.js

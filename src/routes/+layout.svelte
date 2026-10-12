@@ -7,13 +7,13 @@
 	import '@fontsource-variable/jetbrains-mono';
 	import '../app.css';
 	import Theme from '#lib/components/Theme.svelte';
-	import { locale } from '#lib/settings/app.svelte.ts';
+	import { getLocale } from '#lib/paraglide/runtime.js';
 
 	const { children } = $props();
 
 	// the language lives on the document, so every page follows it
 	$effect(() => {
-		document.documentElement.lang = locale.current;
+		document.documentElement.lang = getLocale();
 	});
 </script>
 
