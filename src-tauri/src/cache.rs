@@ -762,22 +762,18 @@ mod tests {
                 .await
                 .unwrap();
 
-            // the holder takes the write lock and lets go of it after the
-            // opener's first wait ran out, but before a rebuild's would; a
-            // second either way, for a loaded runner
+            // the holder keeps the write lock until the opener has given up:
+            // how long SQLite's busy handler really waits differs between
+            // platforms, so the test does not race a timer against it
             let lock = holder.begin_with("BEGIN IMMEDIATE").await.unwrap();
-            let release = tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(Duration::from_secs(3)).await;
-                lock.commit().await.unwrap();
-            });
             let opener = SqlitePoolOptions::new()
                 .max_connections(1)
-                .connect_with(options(Duration::from_secs(2)))
+                .connect_with(options(Duration::from_millis(100)))
                 .await
                 .unwrap();
             let failure = prepare(&opener).await.unwrap_err();
             assert!(busy(&failure), "{failure}");
-            release.await.unwrap();
+            lock.commit().await.unwrap();
 
             // nothing was dropped, and the file opens once the lock is gone
             prepare(&opener).await.unwrap();
@@ -795,7 +791,9 @@ mod tests {
     #[test]
     fn the_schema_script_creates_the_same_migration_table() {
         // the whole template literal, so a column added to either side shows
-        let script = include_str!("../../scripts/repo-schema.mjs");
+        // a Windows checkout may give the script CRLF line ends, while rustc
+        // reads the Rust literal with LF ones
+        let script = include_str!("../../scripts/repo-schema.mjs").replace("\r\n", "\n");
         assert!(
             script.contains(&format!("sqlite.exec(`{MIGRATION_TABLE}`);")),
             "scripts/repo-schema.mjs must create MIGRATION_TABLE as it is"
