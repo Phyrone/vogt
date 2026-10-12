@@ -38,7 +38,7 @@ Nested objects are supported (plugin v4+, SDK v2+). The plugin **flattens them w
 
 ## Message strings — placeholders and markup
 
-Any string value may contain placeholders and markup. **Markup is `{#tag}…{/tag}`, never HTML/XML:** `{#b}` is correct, `<b>` is invalid and will not compile. Tag names are arbitrary, app-defined identifiers — Paraglide maps nothing to HTML for you.
+Any string value may contain placeholders and markup. **Markup is `{#tag}…{/tag}`, never HTML/XML:** `{#b}` is correct markup; `<b>` is ordinary text — it compiles, but nothing turns it into markup, so the UI shows the literal characters. Tag names are arbitrary, app-defined identifiers — Paraglide maps nothing to HTML for you.
 
 | Write this | Meaning | What your code gets |
 | --- | --- | --- |
@@ -64,7 +64,7 @@ Use **options** for data a renderer needs (`to`, `rel`, an icon name) and **attr
 }
 ```
 
-Inside a `|literal|`, escape `|` as `\|` and `\` as `\\`.
+Inside a `|literal|`, escape `|` as `\|`, `\` as `\\`, and `}` as `\}` — an unescaped `}` ends the placeholder.
 
 ## Multi-variant messages
 
