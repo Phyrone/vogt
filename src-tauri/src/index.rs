@@ -79,7 +79,8 @@ pub struct Repos {
     open: Mutex<HashMap<String, Arc<Repo>>>,
     /// Held while an entry is opened, so two commands that both miss one do
     /// not open its file side by side: on a new file, a migration that fails
-    /// in one resets the tables under the other.
+    /// in one resets the tables under the other. A rebuild holds it too, while
+    /// its entries are out of the map.
     opening: tokio::sync::Mutex<()>,
 }
 
@@ -312,7 +313,8 @@ async fn stop(repo: &Repo) {
 /// gigabytes is the one thing that makes the exit wait noticeably, once per
 /// file.
 pub async fn shutdown(repos: &Repos) {
-    // an entry still being opened goes in first, and is drained with the rest
+    // an entry still being opened or rebuilt goes back in first, and is
+    // drained with the rest
     let _opening = repos.opening.lock().await;
     let open: Vec<Arc<Repo>> = repos
         .open
@@ -578,7 +580,8 @@ pub async fn sync_repositories<R: tauri::Runtime>(
         .map(|registered| registered.id.clone())
         .collect();
     let gone: Vec<Arc<Repo>> = {
-        // an entry still being opened goes in first, so it can be told to go
+        // an entry still being opened or rebuilt goes back in first, so it can
+        // be told to go
         let _opening = repos.opening.lock().await;
         let mut map = repos.open.lock().unwrap_or_else(|e| e.into_inner());
         let gone = map
@@ -634,11 +637,61 @@ pub async fn forget_repo<R: tauri::Runtime>(
         .map(|file| file.to_string_lossy().into_owned())
 }
 
-/// Drops every repository cache and lets the indexer build them again.
-/// Not implemented yet; the settings page already offers the action.
+/// Empties the cache of every watched repository and lets the indexer build
+/// it again, which the frontend hears about with `repo-changed` as usual. The
+/// files stay: the frontend may hold connections to them, so their tables are
+/// dropped and made anew instead.
 #[tauri::command]
-pub async fn rebuild_caches() -> Result<(), String> {
-    Err("Clearing and rebuilding caches is not implemented yet".to_owned())
+pub async fn rebuild_caches<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    repos: State<'_, Repos>,
+) -> Result<(), String> {
+    // nothing opens or removes an entry until every one is back
+    let _opening = repos.opening.lock().await;
+    let open: Vec<Arc<Repo>> = repos
+        .open
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .drain()
+        .map(|(_, repo)| repo)
+        .collect();
+    let mut failures = Vec::new();
+    for repo in open {
+        halt(&repo).await;
+        if let Err(failure) = empty(&repo.cache.pool).await {
+            failures.push(format!("{}: {failure}", repo.id));
+        }
+        // a new entry on the same pool, with a worker that walks from scratch
+        let cache = Cache {
+            file: repo.cache.file.clone(),
+            pool: repo.cache.pool.clone(),
+        };
+        let fresh = Repo::new(repo.id.clone(), repo.path.clone(), cache);
+        if let Err(failure) = start(&app, &repos, fresh).await {
+            failures.push(format!("{}: {failure}", repo.id));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Some caches could not be rebuilt: {}",
+            failures.join("; ")
+        ))
+    }
+}
+
+/// Drops every table of a cache and makes them again, empty. The version is
+/// kept, so the rounds of the next walk still count up from where the
+/// frontend is.
+async fn empty(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
+    let version = cache::meta(pool, "version").await?;
+    cache::reset(pool).await?;
+    cache::prepare(pool).await?;
+    if let Some(version) = version {
+        cache::set_meta(pool, &[("version", version)]).await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -836,20 +889,77 @@ mod tests {
             assert!(Arc::ptr_eq(&first, &second));
 
             // the one cache they share is built once and indexed in full
-            let mut progress = cache::progress(&first.cache.pool).await.unwrap();
-            for _ in 0..200 {
-                if (progress.indexed, progress.laid, progress.complete) == (3, 3, true) {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(25)).await;
-                progress = cache::progress(&first.cache.pool).await.unwrap();
-            }
+            let progress = indexed(&app.state::<Repos>(), REAL, 3).await;
             assert_eq!(
                 (progress.indexed, progress.laid, progress.complete),
                 (3, 3, true)
             );
 
             shutdown(&app.state::<Repos>()).await;
+            std::fs::remove_dir_all(dir).unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        });
+    }
+
+    /// Waits until the worker of `repo` has indexed and laid out `commits`.
+    async fn indexed(repos: &Repos, repo: &str, commits: i64) -> cache::Progress {
+        let mut progress = cache::Progress::default();
+        for _ in 0..200 {
+            let entry = repos.get(repo).expect("the repository is watched");
+            progress = cache::progress(&entry.cache.pool).await.unwrap();
+            if (progress.indexed, progress.laid, progress.complete) == (commits, commits, true) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        progress
+    }
+
+    #[test]
+    fn rebuilding_the_caches_empties_them_and_indexes_them_again() {
+        tauri::async_runtime::block_on(async {
+            let (dir, _repo, _refs) = repository("rebuild", 3);
+            let root = scratch("rebuild-cache");
+            let app = app_with_cache(&root);
+            let list = vec![Registered {
+                id: REAL.into(),
+                workspace: WORKSPACE.into(),
+                path: dir.clone(),
+            }];
+            sync_repositories(app.handle().clone(), app.state::<Repos>(), list)
+                .await
+                .unwrap();
+            let repos = app.state::<Repos>();
+            let before = indexed(&repos, REAL, 3).await;
+            assert_eq!((before.indexed, before.laid, before.complete), (3, 3, true));
+            let old = repos.get(REAL).unwrap();
+            let version = cache::meta(&old.cache.pool, "version").await.unwrap();
+            assert!(version.is_some());
+
+            rebuild_caches(app.handle().clone(), app.state::<Repos>())
+                .await
+                .unwrap();
+
+            // the same file, emptied, with the version it had; its new worker
+            // is still letting the wake settle
+            let new = repos.get(REAL).expect("the repository is watched again");
+            assert!(!Arc::ptr_eq(&old, &new));
+            assert_eq!(new.cache.file, old.cache.file);
+            let emptied = cache::progress(&new.cache.pool).await.unwrap();
+            assert_eq!(
+                (emptied.indexed, emptied.laid, emptied.complete),
+                (0, 0, false)
+            );
+            assert_eq!(
+                cache::meta(&new.cache.pool, "version").await.unwrap(),
+                version
+            );
+
+            // and the indexer builds it again
+            let after = indexed(&repos, REAL, 3).await;
+            assert_eq!((after.indexed, after.laid, after.complete), (3, 3, true));
+
+            shutdown(&repos).await;
             std::fs::remove_dir_all(dir).unwrap();
             std::fs::remove_dir_all(root).unwrap();
         });

@@ -143,7 +143,7 @@ pub async fn prepare(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
 
 /// Empties every table of a cache file; the frontend's connection may be
 /// open, so the tables are dropped rather than the file deleted.
-async fn reset(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
+pub async fn reset(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(
         "DROP TABLE IF EXISTS commits;
          DROP TABLE IF EXISTS pending;
