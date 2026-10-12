@@ -55,19 +55,27 @@ export const database = {
 	async removeRepo(workspaceId: string, id: string): Promise<void> {
 		// the connection goes first, so a Windows delete is not blocked by it
 		await closeRepoDatabase(id);
-		// a sync on its way may still list the repository and would open its cache again
-		await afterSyncs(() => invoke<string>('forget_repo', { workspace: workspaceId, repo: id }));
-		await db.delete(repo).where(and(eq(repo.workspaceId, workspaceId), eq(repo.id, id)));
+		// a sync on its way may still list the repository and would open its cache again; the row
+		// goes in the same step, so no later sync reads it after the cache was forgotten
+		await afterSyncs(async () => {
+			await invoke<string>('forget_repo', { workspace: workspaceId, repo: id });
+			await db.delete(repo).where(and(eq(repo.workspaceId, workspaceId), eq(repo.id, id)));
+		});
 	},
 
 	/**
-	 * Tells the backend which repositories to watch and keep in sync. Each list waits for the one
-	 * before, so the backend ends on the newest.
+	 * Tells the backend which repositories to watch and keep in sync. Each sync waits for the
+	 * syncs and removals before it and only then reads the registry, so the backend ends on the
+	 * newest list.
 	 */
-	syncRepositories(workspaces: Workspace[]): Promise<void> {
-		const list = workspaces.flatMap((workspace) =>
-			workspace.repos.map((repo) => ({ id: repo.id, workspace: workspace.id, path: repo.path }))
-		);
-		return afterSyncs(() => invoke<void>('sync_repositories', { list }));
+	syncRepositories(): Promise<void> {
+		return afterSyncs(async () => {
+			const repos = await db
+				.select()
+				.from(repo)
+				.orderBy(sql`rowid`);
+			const list = repos.map((r) => ({ id: r.id, workspace: r.workspaceId, path: r.path }));
+			await invoke<void>('sync_repositories', { list });
+		});
 	}
 };

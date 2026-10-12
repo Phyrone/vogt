@@ -13,7 +13,7 @@ export const load: LayoutLoad = async ({ depends }) => {
 	const workspaces = await listWorkspaces();
 	// every registered repository is watched and indexed while the app runs; the first page does
 	// not wait for every cache to open (a repository's page opens its own)
-	syncRepositories(workspaces).catch((reason) =>
+	syncRepositories().catch((reason) =>
 		console.error('vogt: the repositories could not be watched', reason)
 	);
 	return { workspaces };

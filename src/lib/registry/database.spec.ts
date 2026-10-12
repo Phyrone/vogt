@@ -75,7 +75,7 @@ test('a repository is forgotten only once the sync on its way is done', async ()
 	// the sync would open its cache again
 	const sync = Promise.withResolvers<string>();
 	invoke.mockReturnValueOnce(sync.promise);
-	const synced = database.syncRepositories(await database.listWorkspaces());
+	const synced = database.syncRepositories();
 	const removed = database.removeRepo(work.id, api.id);
 	await new Promise((done) => setTimeout(done, 0));
 	expect(commands()).toEqual(['sync_repositories']);
@@ -83,4 +83,32 @@ test('a repository is forgotten only once the sync on its way is done', async ()
 	sync.resolve('');
 	await Promise.all([synced, removed]);
 	expect(commands()).toEqual(['sync_repositories', 'forget_repo']);
+});
+
+test('a sync after one of two removals does not list the second one again', async () => {
+	await initDatabase();
+	const work = await database.createWorkspace('Work');
+	const api = await database.addRepo(work.id, '/home/me/code/api');
+	const web = await database.addRepo(work.id, '/home/me/code/web');
+	invoke.mockClear();
+
+	// both are removed at once; the first removal's reload asks for a sync while the second waits
+	const first = Promise.withResolvers<string>();
+	const second = Promise.withResolvers<string>();
+	invoke.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+	const removedApi = database.removeRepo(work.id, api.id);
+	const removedWeb = database.removeRepo(work.id, web.id);
+	first.resolve('');
+	await removedApi;
+	const synced = database.syncRepositories();
+	second.resolve('');
+	await Promise.all([removedWeb, synced]);
+
+	// were the list read before the second removal was done, it would open that cache again
+	expect(invoke.mock.calls).toEqual([
+		['forget_repo', { workspace: work.id, repo: api.id }],
+		['forget_repo', { workspace: work.id, repo: web.id }],
+		['sync_repositories', { list: [] }]
+	]);
+	expect((await database.listWorkspaces()).find((w) => w.id === work.id)!.repos).toEqual([]);
 });
