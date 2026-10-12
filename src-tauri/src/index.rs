@@ -832,7 +832,7 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(free, 0);
-            closed.close().await;
+            maintenance::close(&closed).await;
 
             std::fs::remove_dir_all(dir).unwrap();
             std::fs::remove_dir_all(root).unwrap();
@@ -980,7 +980,7 @@ mod tests {
             assert!(hashes.contains(&new.to_string()));
             assert!(!hashes.contains(&old.to_string()));
 
-            entry.cache.pool.close().await;
+            maintenance::close(&entry.cache.pool).await;
             std::fs::remove_dir_all(dir).unwrap();
             std::fs::remove_dir_all(root).unwrap();
         });

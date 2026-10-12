@@ -256,7 +256,7 @@ mod tests {
                 .unwrap();
             assert_eq!(kept, 10);
 
-            pool.close().await;
+            close(&pool).await;
             std::fs::remove_dir_all(dir).unwrap();
         });
     }
@@ -304,7 +304,7 @@ mod tests {
                 .unwrap();
             assert_eq!(kept, 100);
 
-            pool.close().await;
+            close(&pool).await;
             std::fs::remove_dir_all(dir).unwrap();
         });
     }
@@ -315,7 +315,7 @@ mod tests {
         tauri::async_runtime::block_on(async {
             let (dir, pool) = file("app").await;
             fill(&pool, 100).await;
-            pool.close().await;
+            close(&pool).await;
             let mut context = tauri::test::mock_context(tauri::test::noop_assets());
             context.config_mut().app.app_directories_override =
                 Some(AppDirectoriesOverride::Directories(AppDirectoryOverrides {
@@ -335,7 +335,7 @@ mod tests {
                 .unwrap();
             assert_eq!(space(&pool).await.unwrap().mode, INCREMENTAL);
 
-            pool.close().await;
+            close(&pool).await;
             std::fs::remove_dir_all(dir).unwrap();
         });
     }
@@ -357,8 +357,8 @@ mod tests {
 
             assert_eq!(space(&other).await.unwrap().mode, INCREMENTAL);
 
-            other.close().await;
-            pool.close().await;
+            close(&other).await;
+            close(&pool).await;
             std::fs::remove_dir_all(dir).unwrap();
         });
     }
@@ -407,7 +407,7 @@ mod tests {
             assert_eq!(left.free, 0);
             assert!(left.pages < few.pages);
 
-            pool.close().await;
+            close(&pool).await;
             std::fs::remove_dir_all(dir).unwrap();
         });
     }
@@ -430,7 +430,7 @@ mod tests {
                 .unwrap();
             assert_eq!(kept, 50);
 
-            pool.close().await;
+            close(&pool).await;
             std::fs::remove_dir_all(dir).unwrap();
         });
     }
@@ -459,7 +459,7 @@ mod tests {
             // 500 rows, about 71 for each of the seven lines
             assert!(stat.starts_with("500 "), "{stat}");
 
-            pool.close().await;
+            close(&pool).await;
             std::fs::remove_dir_all(dir).unwrap();
         });
     }
