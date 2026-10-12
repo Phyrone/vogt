@@ -25,8 +25,8 @@ use git2::Oid;
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
-use tauri::{AppHandle, Emitter, State};
-use tokio::sync::Notify;
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::sync::{Notify, watch};
 
 use crate::{
     cache::{self, Cache, Fact},
@@ -38,8 +38,8 @@ use crate::{
 const BATCH: usize = 2_000;
 /// How long the worker lets file changes settle before syncing.
 const QUIET: Duration = Duration::from_millis(400);
-/// How long the exit waits for a worker to stop.
-const SHUTDOWN: Duration = Duration::from_secs(5);
+/// How long the exit or a rebuild waits for a worker to stop.
+const SHUTDOWN: Duration = Duration::from_secs(if cfg!(test) { 1 } else { 5 });
 
 /// A registered repository whose cache is kept up to date.
 pub struct Repo {
@@ -52,8 +52,9 @@ pub struct Repo {
     stop: AtomicBool,
     /// Wakes the worker from its wait.
     wake: Notify,
-    /// The worker is gone.
-    stopped: Notify,
+    /// Turns true once the worker is gone; a state rather than a signal, so
+    /// everyone who waits for it hears it.
+    stopped: watch::Sender<bool>,
     /// Dropped last, so the watch lives as long as the entry.
     watcher: Mutex<Option<notify::RecommendedWatcher>>,
 }
@@ -67,7 +68,7 @@ impl Repo {
             dirty: AtomicBool::new(false),
             stop: AtomicBool::new(false),
             wake: Notify::new(),
-            stopped: Notify::new(),
+            stopped: watch::Sender::new(false),
             watcher: Mutex::new(None),
         }
     }
@@ -80,7 +81,7 @@ pub struct Repos {
     /// Held while an entry is opened, so two commands that both miss one do
     /// not open its file side by side: on a new file, a migration that fails
     /// in one resets the tables under the other. A rebuild holds it too, while
-    /// its entries are out of the map.
+    /// it puts new entries in the place of the old ones.
     opening: tokio::sync::Mutex<()>,
     /// Set by [`shutdown`] while it holds `opening`; nothing is opened after.
     closed: AtomicBool,
@@ -148,8 +149,8 @@ pub async fn ensure<R: tauri::Runtime>(
     .await
 }
 
-/// Watches a freshly opened entry, puts it into `repos` and starts its worker.
-/// The caller holds `repos.opening`.
+/// Watches a freshly opened entry, puts it into `repos`, in the place of any
+/// entry with its id, and starts its worker. The caller holds `repos.opening`.
 async fn start<R: tauri::Runtime>(
     app: &AppHandle<R>,
     repos: &Repos,
@@ -305,12 +306,12 @@ async fn worker<R: tauri::Runtime>(app: AppHandle<R>, repo: Arc<Repo>) {
     }
 }
 
-/// Notifies `stopped` when it is dropped, wherever the worker ends.
-struct Gone<'a>(&'a Notify);
+/// Marks the worker stopped when it is dropped, wherever the worker ends.
+struct Gone<'a>(&'a watch::Sender<bool>);
 
 impl Drop for Gone<'_> {
     fn drop(&mut self) {
-        self.0.notify_one();
+        self.0.send_replace(true);
     }
 }
 
@@ -318,7 +319,8 @@ impl Drop for Gone<'_> {
 async fn halt(repo: &Repo) {
     repo.stop.store(true, Ordering::SeqCst);
     repo.wake.notify_one();
-    repo.stopped.notified().await;
+    // the sender lives in the entry, so the wait ends only with a `true`
+    let _ = repo.stopped.subscribe().wait_for(|gone| *gone).await;
     // the watcher's callback owns the repo; dropping it breaks the cycle
     repo.watcher
         .lock()
@@ -347,9 +349,9 @@ async fn stop(repo: &Repo) {
 /// gigabytes is the one thing that makes the exit wait noticeably, once per
 /// file.
 pub async fn shutdown(repos: &Repos) {
-    // an entry already being opened or rebuilt is back in the map once the
-    // lock is free, and is drained with the rest; a command still waiting for
-    // the lock finds `closed` and opens nothing
+    // an entry still being opened, or renewed by a rebuild, is in the map
+    // once the lock is free, and is drained with the rest; a command still
+    // waiting for the lock finds `closed` and opens nothing
     let _opening = repos.opening.lock().await;
     repos.closed.store(true, Ordering::SeqCst);
     let open: Vec<Arc<Repo>> = repos
@@ -616,8 +618,8 @@ pub async fn sync_repositories<R: tauri::Runtime>(
         .map(|registered| registered.id.clone())
         .collect();
     let gone: Vec<Arc<Repo>> = {
-        // an entry still being opened or rebuilt goes back in first, so it can
-        // be told to go
+        // an entry still being opened is in the map once the lock is free, so
+        // it can be told to go
         let _opening = repos.opening.lock().await;
         let mut map = repos.open.lock().unwrap_or_else(|e| e.into_inner());
         let gone = map
@@ -677,35 +679,71 @@ pub async fn forget_repo<R: tauri::Runtime>(
 /// it again, which the frontend hears about with `repo-changed` as usual. The
 /// files stay: the frontend may hold connections to them, so their tables are
 /// dropped and made anew instead.
+///
+/// A worker still in a batch after [`SHUTDOWN`] is not waited for: its cache
+/// is rebuilt in the background once the worker is through, unless the app
+/// exits or the repository leaves the registry first.
 #[tauri::command]
 pub async fn rebuild_caches<R: tauri::Runtime>(
     app: AppHandle<R>,
     repos: State<'_, Repos>,
 ) -> Result<(), String> {
-    // nothing opens or removes an entry until every one is back
+    // nothing opens or removes an entry until every one is renewed; the old
+    // entries stay in the map meanwhile, so the commands still find a pool
     let _opening = repos.opening.lock().await;
     let open: Vec<Arc<Repo>> = repos
         .open
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .drain()
-        .map(|(_, repo)| repo)
+        .values()
+        .cloned()
+        .collect();
+    // the workers stop side by side, as in `shutdown`, so the lock waits
+    // `SHUTDOWN` for them at most, however many there are
+    let halts: Vec<_> = open
+        .into_iter()
+        .map(|repo| {
+            tauri::async_runtime::spawn(async move {
+                let halted = tokio::time::timeout(SHUTDOWN, halt(&repo)).await.is_ok();
+                (repo, halted)
+            })
+        })
         .collect();
     let mut failures = Vec::new();
-    for repo in open {
-        halt(&repo).await;
-        if let Err(failure) = empty(&repo.cache.pool).await {
-            failures.push(format!("{}: {failure}", repo.id));
-        }
-        // a new entry on the same pool, with a worker that walks from scratch
-        let cache = Cache {
-            file: repo.cache.file.clone(),
-            pool: repo.cache.pool.clone(),
+    for halting in halts {
+        let Ok((repo, halted)) = halting.await else {
+            continue;
         };
-        let fresh = Repo::new(repo.id.clone(), repo.path.clone(), cache);
-        if let Err(failure) = start(&app, &repos, fresh).await {
-            failures.push(format!("{}: {failure}", repo.id));
+        if halted {
+            if let Err(failure) = renew(&app, &repos, &repo).await {
+                failures.push(format!("{}: {failure}", repo.id));
+            }
+            continue;
         }
+        eprintln!(
+            "vogt: {} is still being indexed; its cache is rebuilt after this batch",
+            repo.id
+        );
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            // the worker leaves after its batch, as it was told to
+            halt(&repo).await;
+            let repos = app.state::<Repos>();
+            let _opening = repos.opening.lock().await;
+            // the exit or the registry has dealt with the entry meanwhile
+            let current = repos.get(&repo.id);
+            if repos.closed.load(Ordering::SeqCst)
+                || !current.is_some_and(|current| Arc::ptr_eq(&current, &repo))
+            {
+                return;
+            }
+            if let Err(failure) = renew(&app, &repos, &repo).await {
+                eprintln!(
+                    "vogt: rebuilding the cache of {} failed: {failure}",
+                    repo.id
+                );
+            }
+        });
     }
     if failures.is_empty() {
         Ok(())
@@ -715,6 +753,33 @@ pub async fn rebuild_caches<R: tauri::Runtime>(
             failures.join("; ")
         ))
     }
+}
+
+/// Empties the cache of a halted entry and puts a new entry on the same pool
+/// in its place, with a worker that walks from scratch. The caller holds
+/// `repos.opening`.
+async fn renew<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    repos: &Repos,
+    repo: &Repo,
+) -> Result<(), String> {
+    let emptied = empty(&repo.cache.pool).await.map_err(|e| e.to_string());
+    let cache = Cache {
+        file: repo.cache.file.clone(),
+        pool: repo.cache.pool.clone(),
+    };
+    let fresh = Repo::new(repo.id.clone(), repo.path.clone(), cache);
+    if let Err(failure) = start(app, repos, fresh).await {
+        // `start` closed the pool the halted entry shares; without the entry,
+        // the next command to want the repository opens it again
+        repos
+            .open
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&repo.id);
+        return Err(failure);
+    }
+    emptied
 }
 
 /// Drops every table of a cache and makes them again, empty. The version is
@@ -1020,6 +1085,61 @@ mod tests {
             // it had rather than from zero
             assert_eq!(cache::meta(&new.cache.pool, "marker").await.unwrap(), None);
             assert!(version(&new.cache.pool).await > before);
+
+            shutdown(&repos).await;
+            std::fs::remove_dir_all(dir).unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        });
+    }
+
+    #[test]
+    fn a_rebuild_leaves_a_busy_worker_to_finish_and_rebuilds_its_cache_after() {
+        tauri::async_runtime::block_on(async {
+            let (dir, _repo, _refs) = repository("busy-rebuild", 3);
+            let root = scratch("busy-rebuild-cache");
+            let app = app_with_cache(&root);
+            let repos = app.state::<Repos>();
+            // an entry whose worker is in a batch that outlasts the wait: it
+            // has none, so it is gone only once the test says so
+            let cache = cache::open(app.handle(), WORKSPACE, REAL).await.unwrap();
+            let busy = Arc::new(Repo::new(REAL.into(), dir.clone(), cache));
+            repos.open.lock().unwrap().insert(REAL.into(), busy.clone());
+            cache::set_meta(&busy.cache.pool, &[("marker", "1".into())])
+                .await
+                .unwrap();
+
+            // the rebuild gives up on the worker, and the entry stays where
+            // the commands find it, with its cache as it was
+            let rebuilt = tokio::time::timeout(
+                SHUTDOWN * 3,
+                rebuild_caches(app.handle().clone(), app.state::<Repos>()),
+            )
+            .await
+            .expect("the rebuild waits for a worker a bounded time");
+            rebuilt.unwrap();
+            assert!(Arc::ptr_eq(&repos.get(REAL).unwrap(), &busy));
+            assert_eq!(
+                cache::meta(&busy.cache.pool, "marker").await.unwrap(),
+                Some("1".into())
+            );
+
+            // once the worker is through, the cache is emptied and a new entry
+            // takes the old one's place
+            busy.stopped.send_replace(true);
+            for _ in 0..200 {
+                if !Arc::ptr_eq(&repos.get(REAL).unwrap(), &busy) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            let fresh = repos.get(REAL).unwrap();
+            assert!(!Arc::ptr_eq(&fresh, &busy));
+            let after = indexed(&repos, REAL, 3).await;
+            assert_eq!((after.indexed, after.laid, after.complete), (3, 3, true));
+            assert_eq!(
+                cache::meta(&fresh.cache.pool, "marker").await.unwrap(),
+                None
+            );
 
             shutdown(&repos).await;
             std::fs::remove_dir_all(dir).unwrap();
