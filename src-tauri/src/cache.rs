@@ -38,11 +38,19 @@ pub struct Cache {
 }
 
 /// Where the cache of the repository `repo` in the workspace `workspace` lives.
+///
+/// The ids come from the webview and end up in a path that `remove` deletes,
+/// so anything but the UUIDs the registry hands out is refused.
 pub fn file<R: tauri::Runtime>(
     app: &AppHandle<R>,
     workspace: &str,
     repo: &str,
 ) -> Result<PathBuf, String> {
+    for id in [workspace, repo] {
+        if !is_uuid(id) {
+            return Err(format!("{id:?} is not a registry id."));
+        }
+    }
     let dir = app
         .path()
         .app_cache_dir()
@@ -51,6 +59,16 @@ pub fn file<R: tauri::Runtime>(
         .join(workspace)
         .join("repo");
     Ok(dir.join(format!("{repo}.db")))
+}
+
+/// Whether `id` has the shape of a UUID, `8-4-4-4-12` hex digits: the ids the
+/// registry generates with `crypto.randomUUID()`.
+fn is_uuid(id: &str) -> bool {
+    id.len() == 36
+        && id.char_indices().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => c == '-',
+            _ => c.is_ascii_hexdigit(),
+        })
 }
 
 /// The freedesktop cache directory tag: readers that see it know everything
@@ -697,6 +715,38 @@ mod tests {
                 assert!(plan.contains("node_line"), "{plan}");
             }
         });
+    }
+
+    #[test]
+    fn only_a_uuid_names_a_cache_file() {
+        assert!(is_uuid("0f8fad5b-d9cb-469f-a165-70867728950e"));
+        assert!(is_uuid("0F8FAD5B-D9CB-469F-A165-70867728950E"));
+        for id in [
+            "",
+            "..",
+            "../..",
+            "a/b",
+            "repo",
+            "0f8fad5b-d9cb-469f-a165-70867728950",
+            "0f8fad5b-d9cb-469f-a165-70867728950e0",
+            "0f8fad5b/d9cb-469f-a165-70867728950e",
+            "../fad5b-d9cb-469f-a165-70867728950e",
+        ] {
+            assert!(!is_uuid(id), "{id:?}");
+        }
+
+        use tauri::utils::config::{AppDirectoriesOverride, AppDirectoryOverrides};
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().app.app_directories_override =
+            Some(AppDirectoriesOverride::Directories(AppDirectoryOverrides {
+                cache: Some(std::env::temp_dir().join("vogt-ids")),
+                ..Default::default()
+            }));
+        let app = tauri::test::mock_builder().build(context).unwrap();
+        let workspace = "0f8fad5b-d9cb-469f-a165-70867728950e";
+        assert!(file(app.handle(), workspace, "../../escape").is_err());
+        assert!(file(app.handle(), "..", workspace).is_err());
+        assert!(file(app.handle(), workspace, workspace).is_ok());
     }
 
     #[test]
