@@ -561,13 +561,7 @@ pub async fn materialize_mask(
     only: &[String],
     version: i64,
 ) -> Result<ViewInfo, String> {
-    let mut only: Vec<String> = only.to_vec();
-    only.sort();
-    only.dedup();
-    let id = format!(
-        "mask:{}",
-        serde_json::to_string(&only).map_err(|e| e.to_string())?
-    );
+    let (only, id) = mask(only)?;
 
     // only the picked lines' rows are read; the unmasked view already holds
     // every commit's line and row, so only lanes and edges are worked out again
@@ -609,24 +603,10 @@ pub async fn materialize_mask(
         });
     }
 
-    let hashes: Vec<&str> = picked.iter().map(|row| row.hash.as_str()).collect();
-    let mut parents: HashMap<String, Vec<String>> = HashMap::new();
-    for chunk in hashes.chunks(5_000) {
-        let json = serde_json::to_string(chunk).map_err(|e| e.to_string())?;
-        let found = sqlx::query!(
-            "SELECT hash, parents FROM commits WHERE hash IN (SELECT value FROM json_each(?))",
-            json
-        )
-        .fetch_all(pool)
+    let hashes: Vec<String> = picked.iter().map(|row| row.hash.clone()).collect();
+    let parents = cache::parents(pool, &hashes)
         .await
         .map_err(|e| e.to_string())?;
-        parents.extend(found.into_iter().map(|row| {
-            (
-                row.hash,
-                serde_json::from_str(&row.parents).unwrap_or_default(),
-            )
-        }));
-    }
 
     let mut row_of: HashMap<&str, usize> = HashMap::with_capacity(picked.len());
     for (row, found) in picked.iter().enumerate() {
@@ -687,6 +667,19 @@ pub async fn materialize_mask(
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "The masked view could not be built.".into())
+}
+
+/// The lines a mask picks, sorted and without repeats, and the id of the view
+/// that lays them out.
+fn mask(only: &[String]) -> Result<(Vec<String>, String), String> {
+    let mut only = only.to_vec();
+    only.sort();
+    only.dedup();
+    let id = format!(
+        "mask:{}",
+        serde_json::to_string(&only).map_err(|e| e.to_string())?
+    );
+    Ok((only, id))
 }
 
 /// Reorders commits so that each comes before its parents, newest first where
@@ -922,13 +915,7 @@ pub async fn materialize_view(
         .map_err(|e| e.to_string())?
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(0);
-    let mut only = only;
-    only.sort();
-    only.dedup();
-    let id = format!(
-        "mask:{}",
-        serde_json::to_string(&only).map_err(|e| e.to_string())?
-    );
+    let (only, id) = mask(&only)?;
     if let Some(view) = cache::view(pool, &id).await.map_err(|e| e.to_string())?
         && view.version == version
     {
