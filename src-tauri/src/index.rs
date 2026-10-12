@@ -604,6 +604,11 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use tauri::Manager;
 
+    /// Registry ids are UUIDs, and the cache paths are built from them.
+    const WORKSPACE: &str = "00000000-0000-4000-8000-000000000001";
+    const REAL: &str = "00000000-0000-4000-8000-000000000002";
+    const BROKEN: &str = "00000000-0000-4000-8000-000000000003";
+
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("vogt-walk-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -702,13 +707,13 @@ mod tests {
 
             let list = vec![
                 Registered {
-                    id: "broken".into(),
-                    workspace: "ws".into(),
+                    id: BROKEN.into(),
+                    workspace: WORKSPACE.into(),
                     path: missing.clone(),
                 },
                 Registered {
-                    id: "real".into(),
-                    workspace: "ws".into(),
+                    id: REAL.into(),
+                    workspace: WORKSPACE.into(),
                     path: dir.clone(),
                 },
             ];
@@ -721,8 +726,8 @@ mod tests {
             let failure = crate::history::open_history(
                 app.handle().clone(),
                 app.state::<Repos>(),
-                "ws".into(),
-                "broken".into(),
+                WORKSPACE.into(),
+                BROKEN.into(),
                 missing,
             )
             .await
@@ -731,7 +736,7 @@ mod tests {
 
             // the real one is watched, indexed and laid out
             let repos = app.state::<Repos>();
-            let real = repos.get("real").expect("the real repository is watched");
+            let real = repos.get(REAL).expect("the real repository is watched");
             let mut progress = cache::progress(&real.cache.pool).await.unwrap();
             for _ in 0..200 {
                 // `complete` alone is set before the last layout runs
@@ -752,8 +757,8 @@ mod tests {
             let removed = forget_repo(
                 app.handle().clone(),
                 app.state::<Repos>(),
-                "ws".into(),
-                "real".into(),
+                WORKSPACE.into(),
+                REAL.into(),
             )
             .await
             .unwrap();
@@ -775,15 +780,15 @@ mod tests {
             std::fs::create_dir_all(&root).unwrap();
             let app = app_with_cache(&root);
             let list = vec![Registered {
-                id: "real".into(),
-                workspace: "ws".into(),
+                id: REAL.into(),
+                workspace: WORKSPACE.into(),
                 path: dir.clone(),
             }];
             sync_repositories(app.handle().clone(), app.state::<Repos>(), list)
                 .await
                 .unwrap();
             let repos = app.state::<Repos>();
-            let real = repos.get("real").expect("the repository is watched");
+            let real = repos.get(REAL).expect("the repository is watched");
             let pool = &real.cache.pool;
 
             // a new cache file starts out in incremental auto-vacuum mode
@@ -831,7 +836,7 @@ mod tests {
 
             // the last connection folded the log into the file and removed it
             assert!(real.cache.pool.is_closed());
-            assert!(repos.get("real").is_none());
+            assert!(repos.get(REAL).is_none());
             assert!(file.exists());
             assert!(!file.with_extension("db-wal").exists());
             assert!(!file.with_extension("db-shm").exists());
@@ -964,8 +969,8 @@ mod tests {
             let (dir, repo, _refs) = repository("amend", 3);
             let root = scratch("amend-cache");
             let app = app_with_cache(&root);
-            let cache = cache::open(app.handle(), "ws", "repo").await.unwrap();
-            let entry = Repo::new("repo".into(), dir.clone(), cache);
+            let cache = cache::open(app.handle(), WORKSPACE, REAL).await.unwrap();
+            let entry = Repo::new(REAL.into(), dir.clone(), cache);
 
             sync(app.handle(), &entry).await.unwrap();
             let old = repo.head().unwrap().target().unwrap();
