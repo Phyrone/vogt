@@ -64,10 +64,10 @@ describe('layoutGraph', () => {
 		expect(laneOf('19b6f4d')).toBe(3);
 	});
 
-	// the same fixture is laid out by `src-tauri/src/layout.rs`, so the two layouts cannot drift apart
-	it('lays the golden history out as the Rust layout does', () => {
+	// the same fixtures are laid out by `src-tauri/src/layout.rs`, so the two layouts cannot drift apart
+	it.each(golden)('lays out $name as the Rust layout does', (golden) => {
 		const commits = golden.commits.map((c) => commit(c.hash, c.line, c.parents));
-		const layout = layoutGraph(commits, golden.trunk);
+		const layout = layoutGraph(commits, golden.trunk, golden.lines);
 		const row = new Map(commits.map((c, index) => [c.hash, index]));
 		expect(layout.lanes).toBe(golden.lanes);
 		expect(layout.nodes.map((n) => n.lane)).toEqual(golden.lane);

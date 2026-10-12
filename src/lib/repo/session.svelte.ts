@@ -142,7 +142,7 @@ export class RepoSession {
 			const listed = only.length
 				? this.#listed.filter((commit) => only.includes(commit.line))
 				: this.#listed;
-			return layoutWindow(listed, this.trunk, from, to);
+			return layoutWindow(listed, this.trunk, Object.keys(this.lines), from, to);
 		}
 		if (!this.#db) throw new Error('This repository’s cache is not open.');
 		const view = only.length ? await this.#masked(only) : this.view;

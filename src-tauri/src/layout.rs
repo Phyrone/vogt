@@ -217,6 +217,7 @@ mod tests {
 
     #[derive(serde::Deserialize)]
     struct Golden {
+        name: String,
         trunk: String,
         /// The line names; a line's index here is its index for the layout.
         lines: Vec<String>,
@@ -241,41 +242,43 @@ mod tests {
         points: Vec<[usize; 2]>,
     }
 
-    /// The same fixture is laid out by `src/lib/graph/layout.ts`, so the two
+    /// The same fixtures are laid out by `src/lib/graph/layout.ts`, so the two
     /// layouts cannot drift apart.
     #[test]
-    fn the_golden_history_is_laid_out_as_the_webview_does() {
-        let golden: Golden =
+    fn the_golden_histories_are_laid_out_as_the_webview_does() {
+        let goldens: Vec<Golden> =
             serde_json::from_str(include_str!("../../src/lib/graph/layout.golden.json")).unwrap();
-        let index = |line: &str| golden.lines.iter().position(|l| l == line).unwrap();
-        let rows: Vec<Station> = golden
-            .commits
-            .iter()
-            .map(|commit| Station {
-                line: index(&commit.line),
-                parents: commit
-                    .parents
-                    .iter()
-                    .map(|parent| golden.commits.iter().position(|c| &c.hash == parent))
-                    .collect(),
-            })
-            .collect();
+        for golden in goldens {
+            let index = |line: &str| golden.lines.iter().position(|l| l == line).unwrap();
+            let rows: Vec<Station> = golden
+                .commits
+                .iter()
+                .map(|commit| Station {
+                    line: index(&commit.line),
+                    parents: commit
+                        .parents
+                        .iter()
+                        .map(|parent| golden.commits.iter().position(|c| &c.hash == parent))
+                        .collect(),
+                })
+                .collect();
 
-        let mut layout = layout(&rows, golden.lines.len(), index(&golden.trunk));
-        assert_eq!(layout.lanes, golden.lanes);
-        assert_eq!(layout.lane, golden.lane);
-        layout.edges.sort_by_key(|edge| (edge.from, edge.to));
-        let expected: Vec<Edge> = golden
-            .edges
-            .into_iter()
-            .map(|edge| Edge {
-                from: edge.from,
-                to: edge.to,
-                line: index(&edge.line),
-                points: edge.points,
-            })
-            .collect();
-        assert_eq!(layout.edges, expected);
+            let mut layout = layout(&rows, golden.lines.len(), index(&golden.trunk));
+            assert_eq!(layout.lanes, golden.lanes, "{}", golden.name);
+            assert_eq!(layout.lane, golden.lane, "{}", golden.name);
+            layout.edges.sort_by_key(|edge| (edge.from, edge.to));
+            let expected: Vec<Edge> = golden
+                .edges
+                .into_iter()
+                .map(|edge| Edge {
+                    from: edge.from,
+                    to: edge.to,
+                    line: index(&edge.line),
+                    points: edge.points,
+                })
+                .collect();
+            assert_eq!(layout.edges, expected, "{}", golden.name);
+        }
     }
 
     #[test]
