@@ -29,7 +29,7 @@ export async function openCacheDir(): Promise<void> {
 	await openPath(await appCacheDir());
 }
 
-/** Drops every repository cache and lets the indexer build them again. Not implemented yet. */
+/** Empties every repository cache and lets the indexer build them again. */
 export async function rebuildCaches(): Promise<void> {
 	if (!desktop) throw 'Caches can only be rebuilt in the desktop app';
 	await invoke('rebuild_caches');
