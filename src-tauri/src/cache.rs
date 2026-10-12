@@ -289,9 +289,10 @@ pub async fn enqueue(pool: &Pool<Sqlite>, facts: &[Fact]) -> Result<(), sqlx::Er
 /// Inserts `facts` into `commits` and `pending`, leaving the ones already
 /// there alone. Each chunk goes in as one JSON array, so the statements stay
 /// fixed and checked however many rows a chunk holds; `parents` is stored as
-/// the JSON array it arrives as.
+/// the JSON array it arrives as. A chunk's array stays below SQLite's limit
+/// on a bound string, a billion bytes, until its commits average 2 MB each.
 async fn remember(connection: &mut SqliteConnection, facts: &[Fact]) -> Result<(), sqlx::Error> {
-    for chunk in facts.chunks(2_000) {
+    for chunk in facts.chunks(500) {
         let json = serde_json::to_string(chunk).unwrap_or_default();
         sqlx::query!(
             "INSERT OR IGNORE INTO commits
