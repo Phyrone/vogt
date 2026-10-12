@@ -46,6 +46,9 @@ const SLACK: i64 = 4;
 /// file's write lock from start to end, about ten seconds for a gigabyte, and
 /// other writers give up after ten.
 const REBUILD: i64 = if cfg!(test) { 64 } else { 65_536 };
+/// How long [`close`] waits for a connection that is out, and then for the
+/// pool to close; the exit waits for both.
+const CLOSING: Duration = Duration::from_secs(if cfg!(test) { 1 } else { 2 });
 
 /// When a pass runs, which decides how much it may hold the file up.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -146,11 +149,23 @@ pub async fn incremental(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
 /// after a query does: the query's connection is handed back by a task of its
 /// own, and a pool that is closed meanwhile closes it beside the idle ones.
 /// Waiting until every connection is back makes the pool close them in turn.
+///
+/// A connection that is not back within [`CLOSING`] is in a query that is not
+/// about to end, such as a mask over a huge history, and closing the pool would
+/// wait for it as well. Neither wait outlasts [`CLOSING`]: the pool is closed
+/// without it, that connection closes whenever its query is through, and the
+/// log may stay behind.
 pub async fn close(pool: &Pool<Sqlite>) {
-    while pool.num_idle() < pool.size() as usize {
-        tokio::time::sleep(Duration::from_millis(1)).await;
+    let returned = tokio::time::timeout(CLOSING, async {
+        while pool.num_idle() < pool.size() as usize {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await;
+    if returned.is_err() {
+        eprintln!("vogt: closing a database while a query still holds it");
     }
-    pool.close().await;
+    let _ = tokio::time::timeout(CLOSING, pool.close()).await;
 }
 
 /// Tends the app's own database, `name` to tauri-plugin-sql, for as long as
@@ -298,6 +313,24 @@ mod tests {
                 assert_eq!(left, ["test.db"], "round {round}");
                 std::fs::remove_dir_all(dir).unwrap();
             }
+        });
+    }
+
+    #[test]
+    fn closing_does_not_wait_for_a_connection_that_stays_out() {
+        tauri::async_runtime::block_on(async {
+            let (dir, pool) = file("held").await;
+            fill(&pool, 1).await;
+            // a command in a long query keeps its connection
+            let held = pool.acquire().await.unwrap();
+
+            let started = std::time::Instant::now();
+            close(&pool).await;
+
+            assert!(started.elapsed() < CLOSING * 3);
+            assert!(pool.is_closed());
+            drop(held);
+            std::fs::remove_dir_all(dir).unwrap();
         });
     }
 
