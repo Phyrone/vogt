@@ -150,6 +150,11 @@ pub async fn prepare(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     }
 
     if let Err(failure) = migrate(pool).await {
+        // another connection holding the file says nothing about the schema,
+        // so it is no reason to throw the cache away
+        if busy(&failure) {
+            return Err(failure);
+        }
         // the migrations run one statement at a time, so an interruption can
         // leave half a schema behind; the cache is derived, so start over once
         eprintln!("vogt: rebuilding a repository cache after a failed migration: {failure}");
@@ -157,6 +162,18 @@ pub async fn prepare(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
         migrate(pool).await?;
     }
     Ok(())
+}
+
+/// Whether `error` is SQLite reporting that another connection holds the file:
+/// `SQLITE_BUSY` or `SQLITE_LOCKED`, in any of their extended forms.
+fn busy(error: &sqlx::Error) -> bool {
+    let sqlx::Error::Database(error) = error else {
+        return false;
+    };
+    error
+        .code()
+        .and_then(|code| code.parse::<i32>().ok())
+        .is_some_and(|code| matches!(code & 0xff, 5 | 6))
 }
 
 /// Empties every table of a cache file; the frontend's connection may be
@@ -704,6 +721,62 @@ mod tests {
                 .unwrap();
             assert_eq!(expanded.len(), 1);
             assert_eq!(expanded[0].hash, child.hash);
+        });
+    }
+
+    #[test]
+    fn a_cache_another_connection_holds_is_not_rebuilt() {
+        tauri::async_runtime::block_on(async {
+            let dir = std::env::temp_dir().join(format!("vogt-busy-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let options = |timeout| {
+                SqliteConnectOptions::new()
+                    .filename(dir.join("cache.db"))
+                    .create_if_missing(true)
+                    .journal_mode(SqliteJournalMode::Wal)
+                    .busy_timeout(timeout)
+            };
+            let holder = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(options(Duration::from_secs(10)))
+                .await
+                .unwrap();
+            prepare(&holder).await.unwrap();
+            set_meta(&holder, &[("indexed", "1".into())]).await.unwrap();
+            // the line index's migration is undone, so opening the file again
+            // has a write to make
+            sqlx::raw_sql("DROP INDEX node_line; DELETE FROM migration WHERE version = 2")
+                .execute(&holder)
+                .await
+                .unwrap();
+
+            // the holder takes the write lock and lets go of it after the
+            // opener's first wait ran out, but before a rebuild's would
+            let lock = holder.begin_with("BEGIN IMMEDIATE").await.unwrap();
+            let release = tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(1_500)).await;
+                lock.commit().await.unwrap();
+            });
+            let opener = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(options(Duration::from_secs(1)))
+                .await
+                .unwrap();
+            let failure = prepare(&opener).await.unwrap_err();
+            assert!(busy(&failure), "{failure}");
+            release.await.unwrap();
+
+            // nothing was dropped, and the file opens once the lock is gone
+            prepare(&opener).await.unwrap();
+            assert_eq!(
+                meta(&opener, "indexed").await.unwrap().as_deref(),
+                Some("1")
+            );
+
+            maintenance::close(&opener).await;
+            maintenance::close(&holder).await;
+            let _ = std::fs::remove_dir_all(&dir);
         });
     }
 
