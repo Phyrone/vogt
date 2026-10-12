@@ -2,9 +2,11 @@ import { expect, test, vi } from 'vitest';
 import { initDatabase } from '#lib/db/index.ts';
 import { database } from './database.ts';
 
-// the Tauri side of the registry: nothing to call but the cache removal
+// the Tauri side of the registry: nothing to call but the sync and the cache removal
 const { invoke } = vi.hoisted(() => ({
-	invoke: vi.fn(async () => '/tmp/never-opened.db')
+	invoke: vi.fn<(command: string, args?: unknown) => Promise<string>>(
+		async () => '/tmp/never-opened.db'
+	)
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -60,4 +62,25 @@ test('the registry keeps workspaces and their repositories', async () => {
 		'Could not delete the cache file'
 	);
 	expect((await database.listWorkspaces())[1]!.repos).toEqual([web]);
+});
+
+test('a repository is forgotten only once the sync on its way is done', async () => {
+	await initDatabase();
+	const work = await database.createWorkspace('Work');
+	const api = await database.addRepo(work.id, '/home/me/code/api');
+	const commands = () => invoke.mock.calls.map(([command]) => command);
+	invoke.mockClear();
+
+	// the startup sync still lists the repository when it is removed; were it forgotten first,
+	// the sync would open its cache again
+	const sync = Promise.withResolvers<string>();
+	invoke.mockReturnValueOnce(sync.promise);
+	const synced = database.syncRepositories(await database.listWorkspaces());
+	const removed = database.removeRepo(work.id, api.id);
+	await new Promise((done) => setTimeout(done, 0));
+	expect(commands()).toEqual(['sync_repositories']);
+
+	sync.resolve('');
+	await Promise.all([synced, removed]);
+	expect(commands()).toEqual(['sync_repositories', 'forget_repo']);
 });

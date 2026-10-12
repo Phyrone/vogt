@@ -8,17 +8,13 @@ import type { LayoutLoad } from './$types';
 export const ssr = false;
 export const prerender = false;
 
-/** The last list of repositories handed to the backend. */
-let synced: Promise<unknown> = Promise.resolve();
-
 export const load: LayoutLoad = async ({ depends }) => {
 	depends(REGISTRY);
 	const workspaces = await listWorkspaces();
 	// every registered repository is watched and indexed while the app runs; the first page does
-	// not wait for every cache to open (a repository's page opens its own), and each list waits
-	// for the one before, so the backend ends on the newest
-	synced = synced
-		.then(() => syncRepositories(workspaces))
-		.catch((reason) => console.error('vogt: the repositories could not be watched', reason));
+	// not wait for every cache to open (a repository's page opens its own)
+	syncRepositories(workspaces).catch((reason) =>
+		console.error('vogt: the repositories could not be watched', reason)
+	);
 	return { workspaces };
 };

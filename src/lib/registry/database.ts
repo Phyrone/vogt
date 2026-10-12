@@ -5,6 +5,16 @@ import { db } from '#lib/db/index.ts';
 import { repo, workspace } from '#lib/db/schema.ts';
 import type { Repo, Workspace } from './types.ts';
 
+/** What was handed to the backend about the registered repositories, one call after the other. */
+let synced: Promise<unknown> = Promise.resolve();
+
+/** Runs `task` once every sync and removal handed to the backend before it is done. */
+function afterSyncs<T>(task: () => Promise<T>): Promise<T> {
+	const done = synced.then(task);
+	synced = done.catch(() => {});
+	return done;
+}
+
 /** The registry kept in the app's database. */
 export const database = {
 	async listWorkspaces(): Promise<Workspace[]> {
@@ -45,20 +55,19 @@ export const database = {
 	async removeRepo(workspaceId: string, id: string): Promise<void> {
 		// the connection goes first, so a Windows delete is not blocked by it
 		await closeRepoDatabase(id);
-		await invoke<string>('forget_repo', { workspace: workspaceId, repo: id });
+		// a sync on its way may still list the repository and would open its cache again
+		await afterSyncs(() => invoke<string>('forget_repo', { workspace: workspaceId, repo: id }));
 		await db.delete(repo).where(and(eq(repo.workspaceId, workspaceId), eq(repo.id, id)));
 	},
 
-	/** Tells the backend which repositories to watch and keep in sync. */
-	async syncRepositories(workspaces: Workspace[]): Promise<void> {
-		await invoke('sync_repositories', {
-			list: workspaces.flatMap((workspace) =>
-				workspace.repos.map((repo) => ({
-					id: repo.id,
-					workspace: workspace.id,
-					path: repo.path
-				}))
-			)
-		});
+	/**
+	 * Tells the backend which repositories to watch and keep in sync. Each list waits for the one
+	 * before, so the backend ends on the newest.
+	 */
+	syncRepositories(workspaces: Workspace[]): Promise<void> {
+		const list = workspaces.flatMap((workspace) =>
+			workspace.repos.map((repo) => ({ id: repo.id, workspace: workspace.id, path: repo.path }))
+		);
+		return afterSyncs(() => invoke<void>('sync_repositories', { list }));
 	}
 };
