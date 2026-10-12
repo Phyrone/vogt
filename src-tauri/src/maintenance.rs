@@ -103,6 +103,21 @@ pub async fn incremental(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// Closes `pool` so that the file's write-ahead log goes with it.
+///
+/// SQLite folds the log into the file and removes it when a closing
+/// connection finds itself the last one, so two that close at the same time
+/// each see the other and both leave it. That is what closing a pool right
+/// after a query does: the query's connection is handed back by a task of its
+/// own, and a pool that is closed meanwhile closes it beside the idle ones.
+/// Waiting until every connection is back makes the pool close them in turn.
+pub async fn close(pool: &Pool<Sqlite>) {
+    while pool.num_idle() < pool.size() as usize {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    pool.close().await;
+}
+
 /// Tends the app's own database, `name` to tauri-plugin-sql, for as long as
 /// the app runs: first once the frontend has opened it, then every [`EVERY`].
 pub fn start<R: Runtime>(app: &AppHandle<R>, name: &'static str) {
@@ -191,6 +206,29 @@ mod tests {
 
             pool.close().await;
             std::fs::remove_dir_all(dir).unwrap();
+        });
+    }
+
+    #[test]
+    fn closing_right_after_a_query_leaves_no_log_behind() {
+        tauri::async_runtime::block_on(async {
+            // the connection of the last query is still on its way back to the
+            // pool here, which is the moment a plain close gets wrong
+            for round in 0..20 {
+                let (dir, pool) = file(&format!("close-{round}")).await;
+                fill(&pool, 10).await;
+                tend(&pool).await.unwrap();
+
+                close(&pool).await;
+
+                assert_eq!(pool.size(), 0);
+                let left: Vec<_> = std::fs::read_dir(&dir)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().file_name())
+                    .collect();
+                assert_eq!(left, ["test.db"], "round {round}");
+                std::fs::remove_dir_all(dir).unwrap();
+            }
         });
     }
 

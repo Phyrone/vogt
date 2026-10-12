@@ -257,7 +257,7 @@ async fn stop(repo: &Repo) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .take();
-    repo.cache.pool.close().await;
+    maintenance::close(&repo.cache.pool).await;
 }
 
 /// Stops every worker and closes every cache, for the app to exit: SQLite
