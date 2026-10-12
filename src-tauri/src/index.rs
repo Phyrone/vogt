@@ -82,6 +82,8 @@ pub struct Repos {
     /// in one resets the tables under the other. A rebuild holds it too, while
     /// its entries are out of the map.
     opening: tokio::sync::Mutex<()>,
+    /// Set by [`shutdown`] while it holds `opening`; nothing is opened after.
+    closed: AtomicBool,
 }
 
 impl Repos {
@@ -129,6 +131,10 @@ pub async fn ensure<R: tauri::Runtime>(
         return Ok(existing);
     }
     let _opening = repos.opening.lock().await;
+    // the app is exiting: an entry opened now would never be closed
+    if repos.closed.load(Ordering::SeqCst) {
+        return Err("The app is shutting down.".into());
+    }
     // another command may have opened it while this one waited
     if let Some(existing) = repos.get(repo) {
         return Ok(existing);
@@ -341,9 +347,11 @@ async fn stop(repo: &Repo) {
 /// gigabytes is the one thing that makes the exit wait noticeably, once per
 /// file.
 pub async fn shutdown(repos: &Repos) {
-    // an entry still being opened or rebuilt goes back in first, and is
-    // drained with the rest
+    // an entry already being opened or rebuilt is back in the map once the
+    // lock is free, and is drained with the rest; a command still waiting for
+    // the lock finds `closed` and opens nothing
     let _opening = repos.opening.lock().await;
+    repos.closed.store(true, Ordering::SeqCst);
     let open: Vec<Arc<Repo>> = repos
         .open
         .lock()
@@ -926,6 +934,29 @@ mod tests {
             shutdown(&app.state::<Repos>()).await;
             std::fs::remove_dir_all(dir).unwrap();
             std::fs::remove_dir_all(root).unwrap();
+        });
+    }
+
+    #[test]
+    fn nothing_is_opened_after_the_shutdown() {
+        tauri::async_runtime::block_on(async {
+            let (dir, _repo, _refs) = repository("closed", 1);
+            let root = scratch("closed-cache");
+            let app = app_with_cache(&root);
+            let repos = app.state::<Repos>();
+            shutdown(&repos).await;
+
+            // as a command that waited for the lock while the exit drained it
+            assert!(
+                ensure(app.handle(), &repos, WORKSPACE, REAL, &dir)
+                    .await
+                    .is_err()
+            );
+            assert!(repos.get(REAL).is_none());
+            assert!(!cache::file(app.handle(), WORKSPACE, REAL).unwrap().exists());
+
+            std::fs::remove_dir_all(dir).unwrap();
+            let _ = std::fs::remove_dir_all(root);
         });
     }
 
