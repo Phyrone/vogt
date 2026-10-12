@@ -27,6 +27,12 @@ use tauri_plugin_sql::{DbInstances, DbPool};
 /// How long a file goes between two passes. SQLite's advice for connections
 /// that stay open is to optimize every few hours.
 pub const EVERY: Duration = Duration::from_secs(4 * 60 * 60);
+/// How long until the next pass over a file whose last one was `since` ago,
+/// or that has not had one yet.
+pub fn due_in(since: Option<Duration>) -> Duration {
+    since.map_or(EVERY, |since| EVERY.saturating_sub(since))
+}
+
 /// How long [`start`] waits for the frontend to open the app's database.
 const RETRY: Duration = Duration::from_secs(30);
 /// What `PRAGMA auto_vacuum` answers for a file in incremental mode.
@@ -259,6 +265,16 @@ mod tests {
             close(&pool).await;
             std::fs::remove_dir_all(dir).unwrap();
         });
+    }
+
+    #[test]
+    fn the_next_pass_is_due_four_hours_after_the_last() {
+        let minute = Duration::from_secs(60);
+        assert_eq!(due_in(None), EVERY);
+        assert_eq!(due_in(Some(Duration::ZERO)), EVERY);
+        // a wake late in the wait leaves the rest of it, not a whole new one
+        assert_eq!(due_in(Some(EVERY - minute)), minute);
+        assert_eq!(due_in(Some(EVERY + minute)), Duration::ZERO);
     }
 
     #[test]

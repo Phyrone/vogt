@@ -201,8 +201,10 @@ async fn worker<R: tauri::Runtime>(app: AppHandle<R>, repo: Arc<Repo>) {
     // when the cache was last tended; the first pass follows the first sync
     let mut tended: Option<Instant> = None;
     loop {
-        // without a change to sync, the worker still comes back for the cache
-        let changed = tokio::time::timeout(maintenance::EVERY, repo.wake.notified())
+        // without a change to sync, the worker still comes back for the cache,
+        // when its next pass is due: a wake on the way must not restart the wait
+        let due = maintenance::due_in(tended.map(|at| at.elapsed()));
+        let changed = tokio::time::timeout(due, repo.wake.notified())
             .await
             .is_ok();
         if repo.stop.load(Ordering::SeqCst) {
@@ -228,7 +230,7 @@ async fn worker<R: tauri::Runtime>(app: AppHandle<R>, repo: Arc<Repo>) {
         }
         // here rather than on a timer of its own: the worker is what writes
         // the cache, so a pass between two syncs never competes with one
-        if tended.is_none_or(|at| at.elapsed() >= maintenance::EVERY) {
+        if tended.is_none_or(|at| maintenance::due_in(Some(at.elapsed())).is_zero()) {
             if let Err(e) = maintenance::tend(&repo.cache.pool, Pass::Running).await {
                 eprintln!("vogt: tending the cache of {} failed: {e}", repo.id);
             }
