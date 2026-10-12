@@ -201,7 +201,7 @@ pub async fn reset(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
 /// The table [`migrate`] records the applied migrations in. It is created
 /// here rather than by a migration, so it exists before the first one is
 /// recorded in it; `scripts/repo-schema.mjs` creates the same table for the
-/// query macros to check against, and the two must match.
+/// query macros to check against, and a test holds the two to the same text.
 const MIGRATION_TABLE: &str = "CREATE TABLE IF NOT EXISTS migration (
     version     INTEGER PRIMARY KEY,
     description TEXT NOT NULL
@@ -789,6 +789,16 @@ mod tests {
             maintenance::close(&holder).await;
             let _ = std::fs::remove_dir_all(&dir);
         });
+    }
+
+    #[test]
+    fn the_schema_script_creates_the_same_migration_table() {
+        // the whole template literal, so a column added to either side shows
+        let script = include_str!("../../scripts/repo-schema.mjs");
+        assert!(
+            script.contains(&format!("sqlite.exec(`{MIGRATION_TABLE}`);")),
+            "scripts/repo-schema.mjs must create MIGRATION_TABLE as it is"
+        );
     }
 
     #[test]
