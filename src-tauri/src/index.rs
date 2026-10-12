@@ -7,6 +7,8 @@
 //! cache's `pending` table, so an interrupted index continues where it left
 //! off instead of starting over. The frontend is told about both progress and
 //! finished rounds with `repo-changed` events.
+//!
+//! The worker is also what tends its cache file (see `maintenance.rs`).
 
 use std::{
     collections::{BinaryHeap, HashMap, HashSet},
@@ -28,6 +30,7 @@ use tokio::sync::Notify;
 use crate::{
     cache::{self, Cache, Fact},
     history::{self, Refs},
+    maintenance,
 };
 
 /// How many commits one turn of the walk reads at once.
@@ -186,28 +189,47 @@ fn relevant(paths: &[PathBuf]) -> bool {
         })
 }
 
-/// The worker of one repository: waits for changes to settle, then syncs.
+/// The worker of one repository: waits for changes to settle, then syncs, and
+/// tends the cache file whenever a pass is due.
 async fn worker<R: tauri::Runtime>(app: AppHandle<R>, repo: Arc<Repo>) {
     // notifying on drop covers the panic case too, so `stop` cannot wait for
     // a worker that is already gone
     let _gone = Gone(&repo.stopped);
+    // when the cache was last tended; the first pass follows the first sync
+    let mut tended: Option<Instant> = None;
     loop {
-        repo.wake.notified().await;
+        // without a change to sync, the worker still comes back for the cache
+        let changed = tokio::time::timeout(maintenance::EVERY, repo.wake.notified())
+            .await
+            .is_ok();
         if repo.stop.load(Ordering::SeqCst) {
             break;
         }
-        // let a burst of file events settle before reading anything
-        loop {
-            tokio::time::sleep(QUIET).await;
-            if !repo.dirty.swap(false, Ordering::SeqCst) || repo.stop.load(Ordering::SeqCst) {
+        if changed {
+            // let a burst of file events settle before reading anything
+            loop {
+                tokio::time::sleep(QUIET).await;
+                if !repo.dirty.swap(false, Ordering::SeqCst) || repo.stop.load(Ordering::SeqCst) {
+                    break;
+                }
+            }
+            if repo.stop.load(Ordering::SeqCst) {
+                break;
+            }
+            if let Err(e) = sync(&app, &repo).await {
+                eprintln!("vogt: syncing {} failed: {e}", repo.id);
+            }
+            if repo.stop.load(Ordering::SeqCst) {
                 break;
             }
         }
-        if repo.stop.load(Ordering::SeqCst) {
-            break;
-        }
-        if let Err(e) = sync(&app, &repo).await {
-            eprintln!("vogt: syncing {} failed: {e}", repo.id);
+        // here rather than on a timer of its own: the worker is what writes
+        // the cache, so a pass between two syncs never competes with one
+        if tended.is_none_or(|at| at.elapsed() >= maintenance::EVERY) {
+            if let Err(e) = maintenance::tend(&repo.cache.pool).await {
+                eprintln!("vogt: tending the cache of {} failed: {e}", repo.id);
+            }
+            tended = Some(Instant::now());
         }
     }
 }
@@ -679,6 +701,64 @@ mod tests {
             assert!(!file.exists());
             assert!(!file.with_extension("db-wal").exists());
             assert!(!file.with_extension("db-shm").exists());
+
+            std::fs::remove_dir_all(dir).unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        });
+    }
+
+    #[test]
+    fn a_synced_cache_is_tended() {
+        tauri::async_runtime::block_on(async {
+            let (dir, _repo, _refs) = repository("tended", 3);
+            let root = scratch("tended-cache");
+            std::fs::create_dir_all(&root).unwrap();
+            let app = app_with_cache(&root);
+            let list = vec![Registered {
+                id: "real".into(),
+                workspace: "ws".into(),
+                path: dir.clone(),
+            }];
+            sync_repositories(app.handle().clone(), app.state::<Repos>(), list)
+                .await
+                .unwrap();
+            let repos = app.state::<Repos>();
+            let real = repos.get("real").expect("the repository is watched");
+            let pool = &real.cache.pool;
+
+            // a new cache file starts out in incremental auto-vacuum mode
+            let mode: i64 = sqlx::query_scalar("PRAGMA auto_vacuum")
+                .persistent(false)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            assert_eq!(mode, 2);
+
+            // the worker tends it once the first sync is through, which is
+            // when the planner's statistics appear
+            let mut analyzed = false;
+            for _ in 0..200 {
+                analyzed = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = 'commits'",
+                )
+                .fetch_one(pool)
+                .await
+                .is_ok_and(|rows| rows > 0);
+                if analyzed {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            assert!(analyzed);
+
+            forget_repo(
+                app.handle().clone(),
+                app.state::<Repos>(),
+                "ws".into(),
+                "real".into(),
+            )
+            .await
+            .unwrap();
 
             std::fs::remove_dir_all(dir).unwrap();
             std::fs::remove_dir_all(root).unwrap();

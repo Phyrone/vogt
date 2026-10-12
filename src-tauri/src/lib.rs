@@ -6,6 +6,7 @@ mod git;
 mod history;
 mod index;
 mod layout;
+mod maintenance;
 mod update;
 
 /// The database's name for tauri-plugin-sql; `src/lib/db/index.ts` loads the same one.
@@ -47,6 +48,7 @@ fn init_app<R: tauri::Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::erro
     if let Err(failure) = cache::tag(app.handle()) {
         eprintln!("vogt: could not tag the cache directory: {failure}");
     }
+    maintenance::start(app.handle(), DATABASE);
     Ok(())
 }
 

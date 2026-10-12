@@ -29,6 +29,8 @@ use sqlx::{
 use tauri::{AppHandle, Manager};
 use ts_rs::TS;
 
+use crate::maintenance;
+
 /// The cache file of one registered repository.
 pub struct Cache {
     pub file: PathBuf,
@@ -86,6 +88,7 @@ pub async fn open<R: tauri::Runtime>(
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
+    let new = !file.exists();
     let pool = SqlitePoolOptions::new()
         .max_connections(4)
         .connect_with(
@@ -100,6 +103,13 @@ pub async fn open<R: tauri::Runtime>(
         .await
         .map_err(|e| e.to_string())?;
 
+    if new {
+        // costs nothing while the file is empty; an older cache is rebuilt by
+        // its first maintenance pass instead of while it is being opened
+        maintenance::incremental(&pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
     prepare(&pool).await.map_err(|e| e.to_string())?;
 
     Ok(Cache { file, pool })
