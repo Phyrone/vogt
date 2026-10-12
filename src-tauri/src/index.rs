@@ -25,8 +25,8 @@ use git2::Oid;
 use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Sqlite};
-use tauri::{AppHandle, Emitter, State};
-use tokio::sync::Notify;
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::sync::{Notify, watch};
 
 use crate::{
     cache::{self, Cache, Fact},
@@ -38,8 +38,8 @@ use crate::{
 const BATCH: usize = 2_000;
 /// How long the worker lets file changes settle before syncing.
 const QUIET: Duration = Duration::from_millis(400);
-/// How long the exit waits for a worker to stop.
-const SHUTDOWN: Duration = Duration::from_secs(5);
+/// How long the exit or a rebuild waits for a worker to stop.
+const SHUTDOWN: Duration = Duration::from_secs(if cfg!(test) { 1 } else { 5 });
 
 /// A registered repository whose cache is kept up to date.
 pub struct Repo {
@@ -52,8 +52,9 @@ pub struct Repo {
     stop: AtomicBool,
     /// Wakes the worker from its wait.
     wake: Notify,
-    /// The worker is gone.
-    stopped: Notify,
+    /// Turns true once the worker is gone; a state rather than a signal, so
+    /// everyone who waits for it hears it.
+    stopped: watch::Sender<bool>,
     /// Dropped last, so the watch lives as long as the entry.
     watcher: Mutex<Option<notify::RecommendedWatcher>>,
 }
@@ -67,7 +68,7 @@ impl Repo {
             dirty: AtomicBool::new(false),
             stop: AtomicBool::new(false),
             wake: Notify::new(),
-            stopped: Notify::new(),
+            stopped: watch::Sender::new(false),
             watcher: Mutex::new(None),
         }
     }
@@ -75,11 +76,20 @@ impl Repo {
 
 /// The repositories the app keeps in sync, by registry id.
 #[derive(Default)]
-pub struct Repos(Mutex<HashMap<String, Arc<Repo>>>);
+pub struct Repos {
+    open: Mutex<HashMap<String, Arc<Repo>>>,
+    /// Held while an entry is opened, so two commands that both miss one do
+    /// not open its file side by side: on a new file, a migration that fails
+    /// in one resets the tables under the other. A rebuild holds it too, while
+    /// it puts new entries in the place of the old ones.
+    opening: tokio::sync::Mutex<()>,
+    /// Set by [`shutdown`] while it holds `opening`; nothing is opened after.
+    closed: AtomicBool,
+}
 
 impl Repos {
     pub fn get(&self, repo: &str) -> Option<Arc<Repo>> {
-        self.0
+        self.open
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(repo)
@@ -121,17 +131,46 @@ pub async fn ensure<R: tauri::Runtime>(
     if let Some(existing) = repos.get(repo) {
         return Ok(existing);
     }
-    let cache = cache::open(app, workspace, repo).await?;
-    let entry = Arc::new(Repo::new(repo.to_owned(), path.to_owned(), cache));
-    {
-        let mut map = repos.0.lock().unwrap_or_else(|e| e.into_inner());
-        // another command may have opened it while this one awaited
-        if let Some(existing) = map.get(repo) {
-            return Ok(existing.clone());
-        }
-        *entry.watcher.lock().unwrap_or_else(|e| e.into_inner()) = Some(watch(&entry)?);
-        map.insert(repo.to_owned(), entry.clone());
+    let _opening = repos.opening.lock().await;
+    // the app is exiting: an entry opened now would never be closed
+    if repos.closed.load(Ordering::SeqCst) {
+        return Err("The app is shutting down.".into());
     }
+    // another command may have opened it while this one waited
+    if let Some(existing) = repos.get(repo) {
+        return Ok(existing);
+    }
+    let cache = cache::open(app, workspace, repo).await?;
+    start(
+        app,
+        repos,
+        Repo::new(repo.to_owned(), path.to_owned(), cache),
+    )
+    .await
+}
+
+/// Watches a freshly opened entry, puts it into `repos`, in the place of any
+/// entry with its id, and starts its worker. The caller holds `repos.opening`.
+async fn start<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    repos: &Repos,
+    repo: Repo,
+) -> Result<Arc<Repo>, String> {
+    let entry = Arc::new(repo);
+    match watch(&entry) {
+        Ok(watcher) => *entry.watcher.lock().unwrap_or_else(|e| e.into_inner()) = Some(watcher),
+        Err(failure) => {
+            // nothing else holds the entry, so its pool would only be dropped,
+            // leaving the file's write-ahead log behind
+            maintenance::close(&entry.cache.pool).await;
+            return Err(failure);
+        }
+    }
+    repos
+        .open
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(entry.id.clone(), entry.clone());
     tauri::async_runtime::spawn(worker(app.clone(), entry.clone()));
     entry.wake.notify_one();
     Ok(entry)
@@ -143,14 +182,28 @@ pub async fn ensure<R: tauri::Runtime>(
 fn watch(repo: &Arc<Repo>) -> Result<notify::RecommendedWatcher, String> {
     let (gitdir, commondir) = history::git_dirs(&repo.path).map_err(history::open_error)?;
     let repo = repo.clone();
-    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-        let Ok(event) = event else { return };
-        if !relevant(&event.paths) {
-            return;
-        }
-        repo.dirty.store(true, Ordering::SeqCst);
-        repo.wake.notify_one();
-    })
+    // FSEvents reports the real path of what it watches
+    let reported = if cfg!(target_os = "macos") {
+        commondir
+            .canonicalize()
+            .unwrap_or_else(|_| commondir.clone())
+    } else {
+        commondir.clone()
+    };
+    let mut watcher = notify::RecommendedWatcher::new(
+        move |event: notify::Result<notify::Event>| {
+            let Ok(event) = event else { return };
+            if !relevant(&event, &reported) {
+                return;
+            }
+            repo.dirty.store(true, Ordering::SeqCst);
+            repo.wake.notify_one();
+        },
+        // a ref is a file, never a link to a directory; following one would
+        // let a `.git` that links `refs/x` to the home directory have a watch
+        // added for every directory under it
+        notify::Config::default().with_follow_symlinks(false),
+    )
     .map_err(|e| e.to_string())?;
     let mut watch = |dir: PathBuf, recursive: bool| -> Result<(), String> {
         if dir.exists() {
@@ -177,18 +230,32 @@ fn watch(repo: &Arc<Repo>) -> Result<notify::RecommendedWatcher, String> {
     Ok(watcher)
 }
 
-/// Whether a change to `paths` can move a ref or HEAD. An editor rewrites
-/// `.git/index` and `.git/index.lock` on every `git status`, which is not
-/// worth a sync; a ref update arrives as the rename onto its final name. An
-/// event without paths is a rescan signal and is always relevant.
-fn relevant(paths: &[PathBuf]) -> bool {
-    paths.is_empty()
-        || paths.iter().any(|path| {
+/// Whether `event` in the repository whose common git directory is
+/// `commondir` can move a ref or HEAD. Reading a file is no change: the
+/// inotify backend reports every open, and a sync reads the refs, so letting
+/// those through would have each sync wake the next. An editor rewrites the
+/// index and `index.lock` of a worktree on every `git status`, which is not
+/// worth a sync; a ref update arrives as the rename onto its final name. A
+/// ref may be named `index` too, so only the index files themselves are left
+/// out: the ones in `commondir` and in a linked worktree's directory under
+/// it. A rescan signal, or an event without paths, is always relevant, and so
+/// is a kind the backend could not tell.
+fn relevant(event: &notify::Event, commondir: &Path) -> bool {
+    if matches!(event.kind, notify::EventKind::Access(_)) {
+        return false;
+    }
+    let worktrees = commondir.join("worktrees");
+    event.need_rescan()
+        || event.paths.is_empty()
+        || event.paths.iter().any(|path| {
             let name = path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or_default();
-            name != "index" && !name.ends_with(".lock")
+            let parent = path.parent();
+            let index = name == "index"
+                && (parent == Some(commondir) || parent.and_then(Path::parent) == Some(&worktrees));
+            !index && !name.ends_with(".lock")
         })
 }
 
@@ -239,12 +306,12 @@ async fn worker<R: tauri::Runtime>(app: AppHandle<R>, repo: Arc<Repo>) {
     }
 }
 
-/// Notifies `stopped` when it is dropped, wherever the worker ends.
-struct Gone<'a>(&'a Notify);
+/// Marks the worker stopped when it is dropped, wherever the worker ends.
+struct Gone<'a>(&'a watch::Sender<bool>);
 
 impl Drop for Gone<'_> {
     fn drop(&mut self) {
-        self.0.notify_one();
+        self.0.send_replace(true);
     }
 }
 
@@ -252,7 +319,8 @@ impl Drop for Gone<'_> {
 async fn halt(repo: &Repo) {
     repo.stop.store(true, Ordering::SeqCst);
     repo.wake.notify_one();
-    repo.stopped.notified().await;
+    // the sender lives in the entry, so the wait ends only with a `true`
+    let _ = repo.stopped.subscribe().wait_for(|gone| *gone).await;
     // the watcher's callback owns the repo; dropping it breaks the cycle
     repo.watcher
         .lock()
@@ -281,8 +349,13 @@ async fn stop(repo: &Repo) {
 /// gigabytes is the one thing that makes the exit wait noticeably, once per
 /// file.
 pub async fn shutdown(repos: &Repos) {
+    // an entry still being opened, or renewed by a rebuild, is in the map
+    // once the lock is free, and is drained with the rest; a command still
+    // waiting for the lock finds `closed` and opens nothing
+    let _opening = repos.opening.lock().await;
+    repos.closed.store(true, Ordering::SeqCst);
     let open: Vec<Arc<Repo>> = repos
-        .0
+        .open
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .drain()
@@ -364,6 +437,13 @@ pub async fn walk(
     let unchanged = previous.as_deref() == Some(&fingerprint);
     if unchanged && progress.complete {
         return Ok(());
+    }
+    if !unchanged && progress.complete {
+        // the refs moved, so the history is not whole again until this walk
+        // is through; a repository opened meanwhile shows that it is indexing
+        cache::set_meta(pool, &[("complete", "0".into())])
+            .await
+            .map_err(|e| e.to_string())?;
     }
 
     let mut indexed = progress.indexed;
@@ -538,7 +618,10 @@ pub async fn sync_repositories<R: tauri::Runtime>(
         .map(|registered| registered.id.clone())
         .collect();
     let gone: Vec<Arc<Repo>> = {
-        let mut map = repos.0.lock().unwrap_or_else(|e| e.into_inner());
+        // an entry still being opened is in the map once the lock is free, so
+        // it can be told to go
+        let _opening = repos.opening.lock().await;
+        let mut map = repos.open.lock().unwrap_or_else(|e| e.into_inner());
         let gone = map
             .values()
             .filter(|repo| !wanted.contains(&repo.id))
@@ -570,6 +653,11 @@ pub async fn sync_repositories<R: tauri::Runtime>(
 
 /// Drops a repository's cache and stops keeping it in sync; answers with the
 /// cache file it deleted, for the frontend to close.
+///
+/// A worker still in a batch after [`SHUTDOWN`] is not waited for, as in
+/// [`rebuild_caches`]: its cache is closed in the background once the worker
+/// is through, and deleted unless the app exits or the repository is opened
+/// again first.
 #[tauri::command]
 pub async fn forget_repo<R: tauri::Runtime>(
     app: AppHandle<R>,
@@ -577,24 +665,176 @@ pub async fn forget_repo<R: tauri::Runtime>(
     workspace: String,
     repo: String,
 ) -> Result<String, String> {
+    // held until the file is gone, so no command opens it again meanwhile
+    let _opening = repos.opening.lock().await;
     let entry = repos
-        .0
+        .open
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(&repo);
     if let Some(entry) = entry {
-        stop(&entry).await;
+        // every command that opens or drops a cache waits for the lock, so it
+        // is not held for a whole batch
+        if tokio::time::timeout(SHUTDOWN, halt(&entry)).await.is_err() {
+            eprintln!(
+                "vogt: {} is still being indexed; its cache is deleted after this batch",
+                entry.id
+            );
+            let file = cache::file(&app, &workspace, &repo)?;
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                // the worker leaves after its batch, as it was told to
+                halt(&entry).await;
+                maintenance::close(&entry.cache.pool).await;
+                let repos = app.state::<Repos>();
+                let _opening = repos.opening.lock().await;
+                // the exit has come, or a command opened the file again meanwhile
+                if repos.closed.load(Ordering::SeqCst) || repos.get(&repo).is_some() {
+                    return;
+                }
+                if let Err(failure) = cache::remove(&app, &workspace, &repo).await {
+                    eprintln!("vogt: deleting the cache of {repo} failed: {failure}");
+                }
+            });
+            return Ok(file.to_string_lossy().into_owned());
+        }
+        maintenance::close(&entry.cache.pool).await;
     }
     cache::remove(&app, &workspace, &repo)
         .await
         .map(|file| file.to_string_lossy().into_owned())
 }
 
-/// Drops every repository cache and lets the indexer build them again.
-/// Not implemented yet; the settings page already offers the action.
+/// Empties the cache of every watched repository and lets the indexer build
+/// it again, which the frontend hears about with `repo-changed` as usual. The
+/// files stay: the frontend may hold connections to them, so their tables are
+/// dropped and made anew instead.
+///
+/// A worker still in a batch after [`SHUTDOWN`] is not waited for: its cache
+/// is rebuilt in the background once the worker is through, unless the app
+/// exits or the repository leaves the registry first.
 #[tauri::command]
-pub async fn rebuild_caches() -> Result<(), String> {
-    Err("Clearing and rebuilding caches is not implemented yet".to_owned())
+pub async fn rebuild_caches<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    repos: State<'_, Repos>,
+) -> Result<(), String> {
+    // nothing opens or removes an entry until every one is renewed; the old
+    // entries stay in the map meanwhile, so the commands still find a pool
+    let _opening = repos.opening.lock().await;
+    let open: Vec<Arc<Repo>> = repos
+        .open
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .cloned()
+        .collect();
+    // the workers stop side by side, as in `shutdown`, so the lock waits
+    // `SHUTDOWN` for them at most, however many there are
+    let halts: Vec<_> = open
+        .into_iter()
+        .map(|repo| {
+            tauri::async_runtime::spawn(async move {
+                let halted = tokio::time::timeout(SHUTDOWN, halt(&repo)).await.is_ok();
+                (repo, halted)
+            })
+        })
+        .collect();
+    let mut failures = Vec::new();
+    for halting in halts {
+        let Ok((repo, halted)) = halting.await else {
+            continue;
+        };
+        if halted {
+            if let Err(failure) = renew(&app, &repos, &repo).await {
+                failures.push(format!("{}: {failure}", repo.id));
+            }
+            continue;
+        }
+        eprintln!(
+            "vogt: {} is still being indexed; its cache is rebuilt after this batch",
+            repo.id
+        );
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            // the worker leaves after its batch, as it was told to
+            halt(&repo).await;
+            let repos = app.state::<Repos>();
+            let _opening = repos.opening.lock().await;
+            // the exit or the registry has dealt with the entry meanwhile
+            let current = repos.get(&repo.id);
+            if repos.closed.load(Ordering::SeqCst)
+                || !current.is_some_and(|current| Arc::ptr_eq(&current, &repo))
+            {
+                return;
+            }
+            if let Err(failure) = renew(&app, &repos, &repo).await {
+                eprintln!(
+                    "vogt: rebuilding the cache of {} failed: {failure}",
+                    repo.id
+                );
+            }
+        });
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Some caches could not be rebuilt: {}",
+            failures.join("; ")
+        ))
+    }
+}
+
+/// Empties the cache of a halted entry and puts a new entry on the same pool
+/// in its place, with a worker that walks from scratch. The caller holds
+/// `repos.opening`.
+async fn renew<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    repos: &Repos,
+    repo: &Repo,
+) -> Result<(), String> {
+    if let Err(failure) = empty(&repo.cache.pool).await {
+        // the reset runs outside a transaction, so half a schema may be left;
+        // no worker is started on it. Without the entry, the next command to
+        // want the repository opens the file again, and `cache::prepare`
+        // rebuilds what is missing.
+        repos
+            .open
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&repo.id);
+        maintenance::close(&repo.cache.pool).await;
+        return Err(failure.to_string());
+    }
+    let cache = Cache {
+        file: repo.cache.file.clone(),
+        pool: repo.cache.pool.clone(),
+    };
+    let fresh = Repo::new(repo.id.clone(), repo.path.clone(), cache);
+    if let Err(failure) = start(app, repos, fresh).await {
+        // `start` closed the pool the halted entry shares; without the entry,
+        // the next command to want the repository opens it again
+        repos
+            .open
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&repo.id);
+        return Err(failure);
+    }
+    Ok(())
+}
+
+/// Drops every table of a cache and makes them again, empty. The version is
+/// kept, so the rounds of the next walk still count up from where the
+/// frontend is.
+async fn empty(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
+    let version = cache::meta(pool, "version").await?;
+    cache::reset(pool).await?;
+    cache::prepare(pool).await?;
+    if let Some(version) = version {
+        cache::set_meta(pool, &[("version", version)]).await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -603,6 +843,11 @@ mod tests {
     use crate::{cache, history};
     use std::sync::atomic::AtomicUsize;
     use tauri::Manager;
+
+    /// Registry ids are UUIDs, and the cache paths are built from them.
+    const WORKSPACE: &str = "00000000-0000-4000-8000-000000000001";
+    const REAL: &str = "00000000-0000-4000-8000-000000000002";
+    const BROKEN: &str = "00000000-0000-4000-8000-000000000003";
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("vogt-walk-{name}-{}", std::process::id()));
@@ -691,509 +936,938 @@ mod tests {
             .unwrap()
     }
 
-    #[test]
-    fn the_commands_sync_a_broken_path_and_forget_a_repository() {
-        tauri::async_runtime::block_on(async {
-            let (dir, _repo, _refs) = repository("commands", 3);
-            let root = scratch("commands-cache");
-            std::fs::create_dir_all(&root).unwrap();
-            let missing = root.join("not-a-repository");
-            let app = app_with_cache(&root);
+    #[tokio::test]
+    async fn the_commands_sync_a_broken_path_and_forget_a_repository() {
+        let (dir, _repo, _refs) = repository("commands", 3);
+        let root = scratch("commands-cache");
+        std::fs::create_dir_all(&root).unwrap();
+        let missing = root.join("not-a-repository");
+        let app = app_with_cache(&root);
 
-            let list = vec![
-                Registered {
-                    id: "broken".into(),
-                    workspace: "ws".into(),
-                    path: missing.clone(),
-                },
-                Registered {
-                    id: "real".into(),
-                    workspace: "ws".into(),
-                    path: dir.clone(),
-                },
-            ];
-            // a broken entry must not stop the ones after it
-            sync_repositories(app.handle().clone(), app.state::<Repos>(), list)
-                .await
-                .unwrap();
-
-            // opening the broken one reports the folder, not what libgit2 said
-            let failure = crate::history::open_history(
-                app.handle().clone(),
-                app.state::<Repos>(),
-                "ws".into(),
-                "broken".into(),
-                missing,
-            )
-            .await
-            .unwrap_err();
-            assert_eq!(failure, "This folder is not a git repository.");
-
-            // the real one is watched, indexed and laid out
-            let repos = app.state::<Repos>();
-            let real = repos.get("real").expect("the real repository is watched");
-            let mut progress = cache::progress(&real.cache.pool).await.unwrap();
-            for _ in 0..200 {
-                // `complete` alone is set before the last layout runs
-                if (progress.indexed, progress.laid, progress.complete) == (3, 3, true) {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(25)).await;
-                progress = cache::progress(&real.cache.pool).await.unwrap();
-            }
-            assert_eq!(
-                (progress.indexed, progress.laid, progress.complete),
-                (3, 3, true)
-            );
-
-            // forgetting it takes its cache file and write-ahead siblings along
-            let file = real.cache.file.clone();
-            assert!(file.exists());
-            let removed = forget_repo(
-                app.handle().clone(),
-                app.state::<Repos>(),
-                "ws".into(),
-                "real".into(),
-            )
-            .await
-            .unwrap();
-            assert_eq!(removed, file.to_string_lossy());
-            assert!(!file.exists());
-            assert!(!file.with_extension("db-wal").exists());
-            assert!(!file.with_extension("db-shm").exists());
-
-            std::fs::remove_dir_all(dir).unwrap();
-            std::fs::remove_dir_all(root).unwrap();
-        });
-    }
-
-    #[test]
-    fn a_synced_cache_is_tended_and_shutting_down_tends_and_closes_it() {
-        tauri::async_runtime::block_on(async {
-            let (dir, _repo, _refs) = repository("shutdown", 3);
-            let root = scratch("shutdown-cache");
-            std::fs::create_dir_all(&root).unwrap();
-            let app = app_with_cache(&root);
-            let list = vec![Registered {
-                id: "real".into(),
-                workspace: "ws".into(),
+        let list = vec![
+            Registered {
+                id: BROKEN.into(),
+                workspace: WORKSPACE.into(),
+                path: missing.clone(),
+            },
+            Registered {
+                id: REAL.into(),
+                workspace: WORKSPACE.into(),
                 path: dir.clone(),
-            }];
-            sync_repositories(app.handle().clone(), app.state::<Repos>(), list)
-                .await
-                .unwrap();
-            let repos = app.state::<Repos>();
-            let real = repos.get("real").expect("the repository is watched");
-            let pool = &real.cache.pool;
+            },
+        ];
+        // a broken entry must not stop the ones after it
+        sync_repositories(app.handle().clone(), app.state::<Repos>(), list)
+            .await
+            .unwrap();
 
-            // a new cache file starts out in incremental auto-vacuum mode
-            let mode: i64 = sqlx::query_scalar("PRAGMA auto_vacuum")
-                .persistent(false)
-                .fetch_one(pool)
-                .await
-                .unwrap();
-            assert_eq!(mode, 2);
+        // opening the broken one reports the folder, not what libgit2 said
+        let failure = crate::history::open_history(
+            app.handle().clone(),
+            app.state::<Repos>(),
+            WORKSPACE.into(),
+            BROKEN.into(),
+            missing,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(failure, "This folder is not a git repository.");
 
-            // the worker tends it once the first sync is through, which is
-            // when the planner's statistics appear
-            let mut analyzed = false;
-            for _ in 0..200 {
-                analyzed = sqlx::query_scalar::<_, i64>(
-                    "SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = 'commits'",
-                )
-                .fetch_one(pool)
-                .await
-                .is_ok_and(|rows| rows > 0);
-                if analyzed {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(25)).await;
+        // the real one is watched, indexed and laid out
+        let repos = app.state::<Repos>();
+        let real = repos.get(REAL).expect("the real repository is watched");
+        let mut progress = cache::progress(&real.cache.pool).await.unwrap();
+        for _ in 0..200 {
+            // `complete` alone is set before the last layout runs
+            if (progress.indexed, progress.laid, progress.complete) == (3, 3, true) {
+                break;
             }
-            assert!(analyzed);
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            progress = cache::progress(&real.cache.pool).await.unwrap();
+        }
+        assert_eq!(
+            (progress.indexed, progress.laid, progress.complete),
+            (3, 3, true)
+        );
 
-            // a few free pages, which no running pass would bother with
-            sqlx::raw_sql(
-                "CREATE TABLE junk AS SELECT zeroblob(8000) AS data;
-                 DROP TABLE junk;",
-            )
-            .execute(pool)
-            .await
-            .unwrap();
-            let free: i64 = sqlx::query_scalar("PRAGMA freelist_count")
-                .fetch_one(pool)
-                .await
-                .unwrap();
-            assert!(free > 0);
-            let file = real.cache.file.clone();
-            assert!(file.with_extension("db-wal").exists());
+        // forgetting it takes its cache file and write-ahead siblings along
+        let file = real.cache.file.clone();
+        assert!(file.exists());
+        let removed = forget_repo(
+            app.handle().clone(),
+            app.state::<Repos>(),
+            WORKSPACE.into(),
+            REAL.into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(removed, file.to_string_lossy());
+        assert!(!file.exists());
+        assert!(!file.with_extension("db-wal").exists());
+        assert!(!file.with_extension("db-shm").exists());
 
-            shutdown(&repos).await;
-
-            // the last connection folded the log into the file and removed it
-            assert!(real.cache.pool.is_closed());
-            assert!(repos.get("real").is_none());
-            assert!(file.exists());
-            assert!(!file.with_extension("db-wal").exists());
-            assert!(!file.with_extension("db-shm").exists());
-
-            // and the exit pass handed the free pages back first
-            let closed = sqlx::sqlite::SqlitePoolOptions::new()
-                .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&file))
-                .await
-                .unwrap();
-            let free: i64 = sqlx::query_scalar("PRAGMA freelist_count")
-                .fetch_one(&closed)
-                .await
-                .unwrap();
-            assert_eq!(free, 0);
-            maintenance::close(&closed).await;
-
-            std::fs::remove_dir_all(dir).unwrap();
-            std::fs::remove_dir_all(root).unwrap();
-        });
+        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(root);
     }
 
-    #[test]
-    fn the_walk_reads_every_commit_and_lays_it_out() {
-        tauri::async_runtime::block_on(async {
-            let (dir, _repo, refs) = repository("full", 5);
-            let pool = pool().await;
-            let reports = AtomicUsize::new(0);
-
-            walk(
-                &pool,
-                &dir,
-                &refs,
-                2,
-                &|_, _, _, _| {
-                    reports.fetch_add(1, Ordering::SeqCst);
-                },
-                &|| false,
-            )
-            .await
-            .unwrap();
-
-            let progress = cache::progress(&pool).await.unwrap();
-            assert_eq!(
-                (progress.indexed, progress.laid, progress.complete),
-                (5, 5, true)
-            );
-            assert!(reports.load(Ordering::SeqCst) >= 2);
-            let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM node WHERE view_id = 'all'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-            assert_eq!(rows, 5);
-            std::fs::remove_dir_all(dir).unwrap();
-        });
-    }
-
-    #[test]
-    fn an_interrupted_walk_resumes_where_it_stopped() {
-        tauri::async_runtime::block_on(async {
-            let (dir, _repo, refs) = repository("resume", 6);
-            let pool = pool().await;
-            let calls = AtomicUsize::new(0);
-
-            walk(
-                &pool,
-                &dir,
-                &refs,
-                2,
-                &|_, _, _, _| {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                },
-                &|| calls.load(Ordering::SeqCst) > 0,
-            )
-            .await
-            .unwrap();
-
-            let stopped = cache::progress(&pool).await.unwrap();
-            assert!(!stopped.complete);
-            assert!(stopped.indexed > 0 && stopped.indexed < 6);
-            assert!(!cache::pending(&pool).await.unwrap().is_empty());
-
-            // starting again picks the work list up where it was left
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
-                .await
-                .unwrap();
-
-            let done = cache::progress(&pool).await.unwrap();
-            assert_eq!((done.indexed, done.laid, done.complete), (6, 6, true));
-            assert!(cache::pending(&pool).await.unwrap().is_empty());
-            std::fs::remove_dir_all(dir).unwrap();
-        });
-    }
-
-    #[test]
-    fn a_second_walk_only_reads_what_is_new() {
-        tauri::async_runtime::block_on(async {
-            let (dir, repo, refs) = repository("again", 4);
-            let pool = pool().await;
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
-                .await
-                .unwrap();
-            let version = cache::meta(&pool, "version").await.unwrap();
-
-            // nothing changed: the walk does not even lay out again
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
-                .await
-                .unwrap();
-            assert_eq!(cache::meta(&pool, "version").await.unwrap(), version);
-
-            // one more commit: it is read, and the view grows by one
-            let tip = refs.head.unwrap();
-            commit(&repo, "later", &[tip]);
-            let refs = history::refs(&dir).unwrap();
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
-                .await
-                .unwrap();
-
-            let progress = cache::progress(&pool).await.unwrap();
-            assert_eq!(
-                (progress.indexed, progress.laid, progress.complete),
-                (5, 5, true)
-            );
-            std::fs::remove_dir_all(dir).unwrap();
-        });
-    }
-
-    #[test]
-    fn an_amended_tip_leaves_the_old_one_out_of_the_view() {
-        tauri::async_runtime::block_on(async {
-            let (dir, repo, _refs) = repository("amend", 3);
-            let root = scratch("amend-cache");
-            let app = app_with_cache(&root);
-            let cache = cache::open(app.handle(), "ws", "repo").await.unwrap();
-            let entry = Repo::new("repo".into(), dir.clone(), cache);
-
-            sync(app.handle(), &entry).await.unwrap();
-            let old = repo.head().unwrap().target().unwrap();
-            // a head an earlier open had noted, as the cache's `heads` key did
-            cache::set_meta(
-                &entry.cache.pool,
-                &[("heads", serde_json::to_string(&[old.to_string()]).unwrap())],
-            )
-            .await
-            .unwrap();
-
-            // the tip is replaced by a sibling on the same parent
-            let parent = repo.find_commit(old).unwrap().parent(0).unwrap().id();
-            let new = detached_commit(&repo, "rewritten", &[parent]);
-            repo.reference("refs/heads/main", new, true, "rewritten")
-                .unwrap();
-            assert_ne!(old, new);
-
-            sync(app.handle(), &entry).await.unwrap();
-
-            let hashes: Vec<String> =
-                sqlx::query_scalar!("SELECT hash FROM node WHERE view_id = 'all'")
-                    .fetch_all(&entry.cache.pool)
+    #[tokio::test]
+    async fn two_commands_opening_a_new_cache_at_once_share_one_entry() {
+        let (dir, _repo, _refs) = repository("together", 3);
+        let root = scratch("together-cache");
+        let app = app_with_cache(&root);
+        let open = || {
+            let app = app.handle().clone();
+            let dir = dir.clone();
+            tauri::async_runtime::spawn(async move {
+                ensure(&app, &app.state::<Repos>(), WORKSPACE, REAL, &dir)
                     .await
-                    .unwrap();
-            assert!(hashes.contains(&new.to_string()));
-            assert!(!hashes.contains(&old.to_string()));
+                    .unwrap()
+            })
+        };
+        let (first, second) = (open(), open());
+        let (first, second) = (first.await.unwrap(), second.await.unwrap());
+        assert!(Arc::ptr_eq(&first, &second));
 
-            maintenance::close(&entry.cache.pool).await;
-            std::fs::remove_dir_all(dir).unwrap();
-            std::fs::remove_dir_all(root).unwrap();
-        });
+        // the one cache they share is built once and indexed in full
+        let progress = indexed(&app.state::<Repos>(), REAL, 3).await;
+        assert_eq!(
+            (progress.indexed, progress.laid, progress.complete),
+            (3, 3, true)
+        );
+
+        shutdown(&app.state::<Repos>()).await;
+        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(root);
     }
 
-    #[test]
-    fn the_detached_head_of_a_linked_worktree_is_walked() {
-        tauri::async_runtime::block_on(async {
-            let (dir, repo, _refs) = repository("worktree-head", 1);
-            let linked = dir.join("feature");
-            repo.worktree("feature", &linked, None).unwrap();
+    #[tokio::test]
+    async fn nothing_is_opened_after_the_shutdown() {
+        let (dir, _repo, _refs) = repository("closed", 1);
+        let root = scratch("closed-cache");
+        let app = app_with_cache(&root);
+        let repos = app.state::<Repos>();
+        shutdown(&repos).await;
 
-            // a commit only the linked worktree's HEAD points at
-            let head = repo.head().unwrap().target().unwrap();
-            let orphan = detached_commit(&repo, "detached work", &[head]);
-            git2::Repository::open(&linked)
-                .unwrap()
-                .set_head_detached(orphan)
-                .unwrap();
-
-            let refs = history::refs(&dir).unwrap();
-            assert!(refs.heads.contains(&orphan));
-
-            let pool = pool().await;
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+        // as a command that waited for the lock while the exit drained it
+        assert!(
+            ensure(app.handle(), &repos, WORKSPACE, REAL, &dir)
                 .await
-                .unwrap();
-            let hashes: Vec<String> =
-                sqlx::query_scalar!("SELECT hash FROM node WHERE view_id = 'all'")
-                    .fetch_all(&pool)
-                    .await
-                    .unwrap();
-            assert!(hashes.contains(&orphan.to_string()));
-            std::fs::remove_dir_all(dir).unwrap();
-        });
+                .is_err()
+        );
+        assert!(repos.get(REAL).is_none());
+        assert!(!cache::file(app.handle(), WORKSPACE, REAL).unwrap().exists());
+
+        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(root);
     }
 
-    #[test]
-    fn a_deleted_branch_leaves_the_view_and_an_unchanged_walk_stays_quiet() {
-        tauri::async_runtime::block_on(async {
-            let (dir, repo, _refs) = repository("relayout", 1);
-            let a = repo.head().unwrap().target().unwrap();
-            let b = detached_commit(&repo, "gone work", &[a]);
-            repo.branch("gone", &repo.find_commit(b).unwrap(), true)
-                .unwrap();
+    /// Waits until the worker of `repo` has indexed and laid out `commits`.
+    async fn indexed(repos: &Repos, repo: &str, commits: i64) -> cache::Progress {
+        let mut progress = cache::Progress::default();
+        for _ in 0..200 {
+            let entry = repos.get(repo).expect("the repository is watched");
+            progress = cache::progress(&entry.cache.pool).await.unwrap();
+            if (progress.indexed, progress.laid, progress.complete) == (commits, commits, true) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        progress
+    }
 
-            let pool = pool().await;
-            walk(
-                &pool,
-                &dir,
-                &history::refs(&dir).unwrap(),
-                2,
-                &|_, _, _, _| {},
-                &|| false,
-            )
+    #[tokio::test]
+    async fn rebuilding_the_caches_empties_them_and_indexes_them_again() {
+        let (dir, _repo, _refs) = repository("rebuild", 3);
+        let root = scratch("rebuild-cache");
+        let app = app_with_cache(&root);
+        let list = vec![Registered {
+            id: REAL.into(),
+            workspace: WORKSPACE.into(),
+            path: dir.clone(),
+        }];
+        sync_repositories(app.handle().clone(), app.state::<Repos>(), list)
             .await
             .unwrap();
-            assert_eq!(cache::progress(&pool).await.unwrap().laid, 2);
-
-            // the branch is gone, so its commit leaves the view
-            repo.find_branch("gone", git2::BranchType::Local)
-                .unwrap()
-                .delete()
-                .unwrap();
-            let refs = history::refs(&dir).unwrap();
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+        let repos = app.state::<Repos>();
+        let before = indexed(&repos, REAL, 3).await;
+        assert_eq!((before.indexed, before.laid, before.complete), (3, 3, true));
+        let old = repos.get(REAL).unwrap();
+        let version = |pool| async move {
+            cache::meta(pool, "version")
                 .await
-                .unwrap();
-            let progress = cache::progress(&pool).await.unwrap();
-            assert_eq!(
-                (progress.indexed, progress.laid, progress.complete),
-                (2, 1, true)
-            );
-            assert_eq!(
-                cache::meta(&pool, "fingerprint").await.unwrap().as_deref(),
-                Some(refs.fingerprint().as_str())
-            );
-
-            // nothing changed: no report, although the cache holds one more
-            // commit than the view shows
-            let reports = AtomicUsize::new(0);
-            walk(
-                &pool,
-                &dir,
-                &refs,
-                2,
-                &|_, _, _, _| {
-                    reports.fetch_add(1, Ordering::SeqCst);
-                },
-                &|| false,
-            )
+                .unwrap()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(0)
+        };
+        let before = version(&old.cache.pool).await;
+        assert!(before > 0);
+        // a key no walk writes, so only the emptying takes it away
+        cache::set_meta(&old.cache.pool, &[("marker", "1".into())])
             .await
             .unwrap();
-            assert_eq!(reports.load(Ordering::SeqCst), 0);
 
-            std::fs::remove_dir_all(dir).unwrap();
-        });
+        rebuild_caches(app.handle().clone(), app.state::<Repos>())
+            .await
+            .unwrap();
+
+        // a new entry on the same file, which the indexer builds again; a
+        // slow runner may leave the old worker in a sync past the wait, and
+        // the rebuild then comes once it is through
+        for _ in 0..400 {
+            if !Arc::ptr_eq(&repos.get(REAL).unwrap(), &old) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let new = repos.get(REAL).expect("the repository is watched again");
+        assert!(!Arc::ptr_eq(&old, &new));
+        assert_eq!(new.cache.file, old.cache.file);
+        let after = indexed(&repos, REAL, 3).await;
+        assert_eq!((after.indexed, after.laid, after.complete), (3, 3, true));
+        // from an emptied file, whose rounds counted on from the version
+        // it had rather than from zero
+        assert_eq!(cache::meta(&new.cache.pool, "marker").await.unwrap(), None);
+        assert!(version(&new.cache.pool).await > before);
+
+        shutdown(&repos).await;
+        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(root);
     }
 
-    #[test]
-    fn a_fetched_remote_tip_marks_its_commits_pushed_without_drawing_them() {
-        tauri::async_runtime::block_on(async {
-            let (dir, repo, _refs) = repository("remote", 1);
-            let a = repo.head().unwrap().target().unwrap();
-            // the remote fetched a child of A that main does not have yet
-            let b = detached_commit(&repo, "on the remote", &[a]);
-            repo.reference("refs/remotes/origin/main", b, true, "fetch")
-                .unwrap();
+    #[tokio::test]
+    async fn a_cache_that_cannot_be_emptied_is_opened_again_instead_of_watched() {
+        let (dir, _repo, _refs) = repository("failed-rebuild", 3);
+        let root = scratch("failed-rebuild-cache");
+        let app = app_with_cache(&root);
+        let list = || {
+            vec![Registered {
+                id: REAL.into(),
+                workspace: WORKSPACE.into(),
+                path: dir.clone(),
+            }]
+        };
+        sync_repositories(app.handle().clone(), app.state::<Repos>(), list())
+            .await
+            .unwrap();
+        let repos = app.state::<Repos>();
+        indexed(&repos, REAL, 3).await;
+        let old = repos.get(REAL).unwrap();
+        halt(&old).await;
+        // a closed pool makes the emptying fail, as an I/O error halfway would
+        old.cache.pool.close().await;
 
-            let refs = history::refs(&dir).unwrap();
-            assert_eq!(refs.remote_tips, [b]);
-            let pool = pool().await;
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
-                .await
-                .unwrap();
+        let failed = {
+            let _opening = repos.opening.lock().await;
+            renew(app.handle(), &repos, &old).await
+        };
 
-            let a_hash = a.to_string();
-            let pushed: i64 = sqlx::query_scalar!(
-                "SELECT pushed FROM node WHERE view_id = 'all' AND hash = ?",
-                a_hash
+        // no worker runs on the broken cache; the next sync opens it again
+        assert!(failed.is_err());
+        assert!(repos.get(REAL).is_none());
+        sync_repositories(app.handle().clone(), app.state::<Repos>(), list())
+            .await
+            .unwrap();
+        let reopened = repos.get(REAL).expect("the repository is watched again");
+        assert!(!Arc::ptr_eq(&old, &reopened));
+        let progress = indexed(&repos, REAL, 3).await;
+        assert_eq!(
+            (progress.indexed, progress.laid, progress.complete),
+            (3, 3, true)
+        );
+
+        shutdown(&repos).await;
+        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn a_rebuild_leaves_a_busy_worker_to_finish_and_rebuilds_its_cache_after() {
+        let (dir, _repo, _refs) = repository("busy-rebuild", 3);
+        let root = scratch("busy-rebuild-cache");
+        let app = app_with_cache(&root);
+        let repos = app.state::<Repos>();
+        // an entry whose worker is in a batch that outlasts the wait: it
+        // has none, so it is gone only once the test says so
+        let cache = cache::open(app.handle(), WORKSPACE, REAL).await.unwrap();
+        let busy = Arc::new(Repo::new(REAL.into(), dir.clone(), cache));
+        repos.open.lock().unwrap().insert(REAL.into(), busy.clone());
+        cache::set_meta(&busy.cache.pool, &[("marker", "1".into())])
+            .await
+            .unwrap();
+
+        // the rebuild gives up on the worker, and the entry stays where
+        // the commands find it, with its cache as it was
+        let rebuilt = tokio::time::timeout(
+            SHUTDOWN * 3,
+            rebuild_caches(app.handle().clone(), app.state::<Repos>()),
+        )
+        .await
+        .expect("the rebuild waits for a worker a bounded time");
+        rebuilt.unwrap();
+        assert!(Arc::ptr_eq(&repos.get(REAL).unwrap(), &busy));
+        assert_eq!(
+            cache::meta(&busy.cache.pool, "marker").await.unwrap(),
+            Some("1".into())
+        );
+
+        // once the worker is through, the cache is emptied and a new entry
+        // takes the old one's place
+        busy.stopped.send_replace(true);
+        for _ in 0..200 {
+            if !Arc::ptr_eq(&repos.get(REAL).unwrap(), &busy) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let fresh = repos.get(REAL).unwrap();
+        assert!(!Arc::ptr_eq(&fresh, &busy));
+        let after = indexed(&repos, REAL, 3).await;
+        assert_eq!((after.indexed, after.laid, after.complete), (3, 3, true));
+        assert_eq!(
+            cache::meta(&fresh.cache.pool, "marker").await.unwrap(),
+            None
+        );
+
+        shutdown(&repos).await;
+        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn forgetting_a_busy_repository_deletes_its_cache_once_the_worker_is_through() {
+        let (dir, _repo, _refs) = repository("busy-forget", 3);
+        let root = scratch("busy-forget-cache");
+        let app = app_with_cache(&root);
+        let repos = app.state::<Repos>();
+        // an entry whose worker is in a batch that outlasts the wait, as in
+        // the busy rebuild
+        let cache = cache::open(app.handle(), WORKSPACE, REAL).await.unwrap();
+        let busy = Arc::new(Repo::new(REAL.into(), dir.clone(), cache));
+        repos.open.lock().unwrap().insert(REAL.into(), busy.clone());
+        let file = busy.cache.file.clone();
+
+        // the command gives up on the worker and lets go of the lock, so
+        // the other commands do not wait for the batch
+        let removed = tokio::time::timeout(
+            SHUTDOWN * 3,
+            forget_repo(
+                app.handle().clone(),
+                app.state::<Repos>(),
+                WORKSPACE.into(),
+                REAL.into(),
+            ),
+        )
+        .await
+        .expect("forgetting waits for a worker a bounded time")
+        .unwrap();
+        assert_eq!(removed, file.to_string_lossy());
+        assert!(repos.get(REAL).is_none());
+        assert!(repos.opening.try_lock().is_ok());
+        assert!(file.exists());
+
+        // once the worker is through, its cache is closed and deleted
+        busy.stopped.send_replace(true);
+        for _ in 0..200 {
+            if !file.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(busy.cache.pool.is_closed());
+        assert!(!file.exists());
+
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    // inspects the file with constant pragmas, which no schema describes
+    #[allow(clippy::disallowed_methods)]
+    async fn a_synced_cache_is_tended_and_shutting_down_tends_and_closes_it() {
+        let (dir, _repo, _refs) = repository("shutdown", 3);
+        let root = scratch("shutdown-cache");
+        std::fs::create_dir_all(&root).unwrap();
+        let app = app_with_cache(&root);
+        let list = vec![Registered {
+            id: REAL.into(),
+            workspace: WORKSPACE.into(),
+            path: dir.clone(),
+        }];
+        sync_repositories(app.handle().clone(), app.state::<Repos>(), list)
+            .await
+            .unwrap();
+        let repos = app.state::<Repos>();
+        let real = repos.get(REAL).expect("the repository is watched");
+        let pool = &real.cache.pool;
+
+        // a new cache file starts out in incremental auto-vacuum mode
+        let mode: i64 = sqlx::query_scalar("PRAGMA auto_vacuum")
+            .persistent(false)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(mode, 2);
+
+        // the worker tends it once the first sync is through, which is
+        // when the planner's statistics appear
+        let mut analyzed = false;
+        for _ in 0..200 {
+            analyzed = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = 'commits'",
             )
+            .fetch_one(pool)
+            .await
+            .is_ok_and(|rows| rows > 0);
+            if analyzed {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(analyzed);
+
+        // a few free pages, which no running pass would bother with
+        sqlx::raw_sql(
+            "CREATE TABLE junk AS SELECT zeroblob(8000) AS data;
+             DROP TABLE junk;",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        let free: i64 = sqlx::query_scalar("PRAGMA freelist_count")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert!(free > 0);
+        let file = real.cache.file.clone();
+        assert!(file.with_extension("db-wal").exists());
+
+        shutdown(&repos).await;
+
+        // the last connection folded the log into the file and removed it
+        assert!(real.cache.pool.is_closed());
+        assert!(repos.get(REAL).is_none());
+        assert!(file.exists());
+        assert!(!file.with_extension("db-wal").exists());
+        assert!(!file.with_extension("db-shm").exists());
+
+        // and the exit pass handed the free pages back first
+        let closed = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&file))
+            .await
+            .unwrap();
+        let free: i64 = sqlx::query_scalar("PRAGMA freelist_count")
+            .fetch_one(&closed)
+            .await
+            .unwrap();
+        assert_eq!(free, 0);
+        maintenance::close(&closed).await;
+
+        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn the_walk_reads_every_commit_and_lays_it_out() {
+        let (dir, _repo, refs) = repository("full", 5);
+        let pool = pool().await;
+        let reports = AtomicUsize::new(0);
+
+        walk(
+            &pool,
+            &dir,
+            &refs,
+            2,
+            &|_, _, _, _| {
+                reports.fetch_add(1, Ordering::SeqCst);
+            },
+            &|| false,
+        )
+        .await
+        .unwrap();
+
+        let progress = cache::progress(&pool).await.unwrap();
+        assert_eq!(
+            (progress.indexed, progress.laid, progress.complete),
+            (5, 5, true)
+        );
+        assert!(reports.load(Ordering::SeqCst) >= 2);
+        let rows: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM node WHERE view_id = 'all'")
             .fetch_one(&pool)
             .await
             .unwrap();
-            assert_eq!(pushed, 1);
-            let b_hash = b.to_string();
-            let remote_only: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM node WHERE view_id = 'all' AND hash = ?",
-                b_hash
-            )
-            .fetch_one(&pool)
+        assert_eq!(rows, 5);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_walk_resumes_where_it_stopped() {
+        let (dir, _repo, refs) = repository("resume", 6);
+        let pool = pool().await;
+        let calls = AtomicUsize::new(0);
+
+        walk(
+            &pool,
+            &dir,
+            &refs,
+            2,
+            &|_, _, _, _| {
+                calls.fetch_add(1, Ordering::SeqCst);
+            },
+            &|| calls.load(Ordering::SeqCst) > 0,
+        )
+        .await
+        .unwrap();
+
+        let stopped = cache::progress(&pool).await.unwrap();
+        assert!(!stopped.complete);
+        assert!(stopped.indexed > 0 && stopped.indexed < 6);
+        assert!(!cache::pending(&pool).await.unwrap().is_empty());
+
+        // starting again picks the work list up where it was left
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
             .await
             .unwrap();
-            assert_eq!(remote_only, 0);
-            std::fs::remove_dir_all(dir).unwrap();
-        });
+
+        let done = cache::progress(&pool).await.unwrap();
+        assert_eq!((done.indexed, done.laid, done.complete), (6, 6, true));
+        assert!(cache::pending(&pool).await.unwrap().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_second_walk_only_reads_what_is_new() {
+        let (dir, repo, refs) = repository("again", 4);
+        let pool = pool().await;
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+        let version = cache::meta(&pool, "version").await.unwrap();
+
+        // nothing changed: the walk does not even lay out again
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+        assert_eq!(cache::meta(&pool, "version").await.unwrap(), version);
+
+        // one more commit: it is read, and the view grows by one
+        let tip = refs.head.unwrap();
+        commit(&repo, "later", &[tip]);
+        let refs = history::refs(&dir).unwrap();
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+
+        let progress = cache::progress(&pool).await.unwrap();
+        assert_eq!(
+            (progress.indexed, progress.laid, progress.complete),
+            (5, 5, true)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_walk_after_the_refs_moved_is_not_complete_until_it_is_through() {
+        let (dir, repo, refs) = repository("rewalk", 3);
+        let pool = pool().await;
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+        assert!(cache::progress(&pool).await.unwrap().complete);
+
+        // a new commit, and a walk that stops after its first report
+        commit(&repo, "later", &[refs.head.unwrap()]);
+        let refs = history::refs(&dir).unwrap();
+        let reports = Mutex::new(Vec::new());
+        walk(
+            &pool,
+            &dir,
+            &refs,
+            2,
+            &|_, _, _, complete| reports.lock().unwrap().push(complete),
+            &|| !reports.lock().unwrap().is_empty(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(*reports.lock().unwrap(), [false]);
+        assert!(!cache::progress(&pool).await.unwrap().complete);
+
+        // the rest of the walk is what makes it whole again
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+        let progress = cache::progress(&pool).await.unwrap();
+        assert_eq!(
+            (progress.indexed, progress.laid, progress.complete),
+            (4, 4, true)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_amended_tip_leaves_the_old_one_out_of_the_view() {
+        let (dir, repo, _refs) = repository("amend", 3);
+        let root = scratch("amend-cache");
+        let app = app_with_cache(&root);
+        let cache = cache::open(app.handle(), WORKSPACE, REAL).await.unwrap();
+        let entry = Repo::new(REAL.into(), dir.clone(), cache);
+
+        sync(app.handle(), &entry).await.unwrap();
+        let old = repo.head().unwrap().target().unwrap();
+        // a head an earlier open had noted, as the cache's `heads` key did
+        cache::set_meta(
+            &entry.cache.pool,
+            &[("heads", serde_json::to_string(&[old.to_string()]).unwrap())],
+        )
+        .await
+        .unwrap();
+
+        // the tip is replaced by a sibling on the same parent
+        let parent = repo.find_commit(old).unwrap().parent(0).unwrap().id();
+        let new = detached_commit(&repo, "rewritten", &[parent]);
+        repo.reference("refs/heads/main", new, true, "rewritten")
+            .unwrap();
+        assert_ne!(old, new);
+
+        sync(app.handle(), &entry).await.unwrap();
+
+        let hashes: Vec<String> =
+            sqlx::query_scalar!("SELECT hash FROM node WHERE view_id = 'all'")
+                .fetch_all(&entry.cache.pool)
+                .await
+                .unwrap();
+        assert!(hashes.contains(&new.to_string()));
+        assert!(!hashes.contains(&old.to_string()));
+
+        maintenance::close(&entry.cache.pool).await;
+        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn the_detached_head_of_a_linked_worktree_is_walked() {
+        let (dir, repo, _refs) = repository("worktree-head", 1);
+        let linked = dir.join("feature");
+        repo.worktree("feature", &linked, None).unwrap();
+
+        // a commit only the linked worktree's HEAD points at
+        let head = repo.head().unwrap().target().unwrap();
+        let orphan = detached_commit(&repo, "detached work", &[head]);
+        git2::Repository::open(&linked)
+            .unwrap()
+            .set_head_detached(orphan)
+            .unwrap();
+
+        let refs = history::refs(&dir).unwrap();
+        assert!(refs.heads.contains(&orphan));
+
+        let pool = pool().await;
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+        let hashes: Vec<String> =
+            sqlx::query_scalar!("SELECT hash FROM node WHERE view_id = 'all'")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(hashes.contains(&orphan.to_string()));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_deleted_branch_leaves_the_view_and_an_unchanged_walk_stays_quiet() {
+        let (dir, repo, _refs) = repository("relayout", 1);
+        let a = repo.head().unwrap().target().unwrap();
+        let b = detached_commit(&repo, "gone work", &[a]);
+        repo.branch("gone", &repo.find_commit(b).unwrap(), true)
+            .unwrap();
+
+        let pool = pool().await;
+        walk(
+            &pool,
+            &dir,
+            &history::refs(&dir).unwrap(),
+            2,
+            &|_, _, _, _| {},
+            &|| false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(cache::progress(&pool).await.unwrap().laid, 2);
+
+        // the branch is gone, so its commit leaves the view
+        repo.find_branch("gone", git2::BranchType::Local)
+            .unwrap()
+            .delete()
+            .unwrap();
+        let refs = history::refs(&dir).unwrap();
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+        let progress = cache::progress(&pool).await.unwrap();
+        assert_eq!(
+            (progress.indexed, progress.laid, progress.complete),
+            (2, 1, true)
+        );
+        assert_eq!(
+            cache::meta(&pool, "fingerprint").await.unwrap().as_deref(),
+            Some(refs.fingerprint().as_str())
+        );
+
+        // nothing changed: no report, although the cache holds one more
+        // commit than the view shows
+        let reports = AtomicUsize::new(0);
+        walk(
+            &pool,
+            &dir,
+            &refs,
+            2,
+            &|_, _, _, _| {
+                reports.fetch_add(1, Ordering::SeqCst);
+            },
+            &|| false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(reports.load(Ordering::SeqCst), 0);
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_fetched_remote_tip_marks_its_commits_pushed_without_drawing_them() {
+        let (dir, repo, _refs) = repository("remote", 1);
+        let a = repo.head().unwrap().target().unwrap();
+        // the remote fetched a child of A that main does not have yet
+        let b = detached_commit(&repo, "on the remote", &[a]);
+        repo.reference("refs/remotes/origin/main", b, true, "fetch")
+            .unwrap();
+
+        let refs = history::refs(&dir).unwrap();
+        assert_eq!(refs.remote_tips, [b]);
+        let pool = pool().await;
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+
+        let a_hash = a.to_string();
+        let pushed: i64 = sqlx::query_scalar!(
+            "SELECT pushed FROM node WHERE view_id = 'all' AND hash = ?",
+            a_hash
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(pushed, 1);
+        let b_hash = b.to_string();
+        let remote_only: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM node WHERE view_id = 'all' AND hash = ?",
+            b_hash
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(remote_only, 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_shallow_clone_is_walked_to_where_its_history_ends() {
+        let (source, _repo, _refs) = repository("shallow-source", 3);
+        let dir = scratch("shallow");
+        // libgit2 cannot make a shallow clone, the git CLI can; a local
+        // path only honours --depth through the transport --no-local picks
+        let cloned = std::process::Command::new("git")
+            .args(["clone", "--quiet", "--no-local", "--depth", "1"])
+            .arg(&source)
+            .arg(&dir)
+            .status()
+            .unwrap();
+        assert!(cloned.success());
+        assert!(dir.join(".git").join("shallow").exists());
+
+        let refs = history::refs(&dir).unwrap();
+        let pool = pool().await;
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+
+        // the parent the clone does not have is not looked for
+        let progress = cache::progress(&pool).await.unwrap();
+        assert_eq!(
+            (progress.indexed, progress.laid, progress.complete),
+            (1, 1, true)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(source).unwrap();
+    }
+
+    /// A change of `kind` to `paths`.
+    fn event(kind: notify::EventKind, paths: &[PathBuf]) -> notify::Event {
+        paths.iter().fold(notify::Event::new(kind), |event, path| {
+            event.add_path(path.clone())
+        })
     }
 
     #[test]
     fn the_watcher_ignores_index_churn() {
+        use notify::event::{CreateKind, EventKind, ModifyKind, RenameMode};
         let git = Path::new("/repo/.git");
-        assert!(!relevant(&[git.join("index")]));
-        assert!(!relevant(&[git.join("index.lock")]));
-        assert!(!relevant(&[git.join("index"), git.join("index.lock")]));
-        assert!(relevant(&[git.join("HEAD")]));
-        assert!(relevant(&[git.join("packed-refs")]));
-        assert!(relevant(&[git.join("refs/heads/main")]));
+        let renamed = |paths: &[PathBuf]| {
+            relevant(
+                &event(EventKind::Modify(ModifyKind::Name(RenameMode::Both)), paths),
+                git,
+            )
+        };
+        assert!(!renamed(&[git.join("index")]));
+        assert!(!renamed(&[git.join("index.lock")]));
+        assert!(!renamed(&[git.join("index"), git.join("index.lock")]));
+        // a linked worktree keeps its index in its own directory
+        assert!(!renamed(&[git.join("worktrees/feature/index")]));
+        assert!(renamed(&[git.join("HEAD")]));
+        assert!(renamed(&[git.join("packed-refs")]));
+        assert!(renamed(&[git.join("refs/heads/main")]));
+        assert!(relevant(
+            &event(
+                EventKind::Create(CreateKind::File),
+                &[git.join("refs/tags/v1")]
+            ),
+            git
+        ));
+        // a branch, tag or remote branch named `index` is a ref like any other
+        for name in [
+            "heads/index",
+            "heads/worktrees/x/index",
+            "tags/index",
+            "remotes/origin/index",
+        ] {
+            let lock = git.join(format!("refs/{name}.lock"));
+            assert!(renamed(&[lock, git.join("refs").join(name)]), "{name}");
+        }
         // one relevant path is enough
-        assert!(relevant(&[git.join("index"), git.join("refs/heads/main")]));
+        assert!(renamed(&[git.join("index"), git.join("refs/heads/main")]));
         // an event without paths is a rescan signal, never ignorable
-        assert!(relevant(&[]));
+        assert!(relevant(&event(EventKind::Any, &[]), git));
+        assert!(relevant(
+            &event(EventKind::Other, &[]).set_flag(notify::event::Flag::Rescan),
+            git
+        ));
     }
 
     #[test]
+    fn the_watcher_ignores_reads() {
+        use notify::event::{AccessKind, AccessMode, EventKind};
+        let head = [PathBuf::from("/repo/.git/refs/heads/main")];
+        let git = Path::new("/repo/.git");
+        // what the inotify backend reports when a sync reads the refs
+        assert!(!relevant(
+            &event(EventKind::Access(AccessKind::Open(AccessMode::Any)), &head),
+            git
+        ));
+        assert!(!relevant(
+            &event(
+                EventKind::Access(AccessKind::Close(AccessMode::Read)),
+                &head
+            ),
+            git
+        ));
+    }
+
+    /// An entry for `dir` with its watch on, and nothing heard yet.
+    #[cfg(target_os = "linux")]
+    async fn watched(dir: &Path) -> (Arc<Repo>, notify::RecommendedWatcher) {
+        let cache = Cache {
+            file: dir.join("unused.db"),
+            pool: pool().await,
+        };
+        let repo = Arc::new(Repo::new(REAL.into(), dir.to_owned(), cache));
+        let watcher = watch(&repo).unwrap();
+        // adding the recursive watches opens the directories they cover
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        repo.dirty.store(false, Ordering::SeqCst);
+        (repo, watcher)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn reading_the_refs_does_not_wake_the_worker() {
+        let (dir, repo, _refs) = repository("reads", 2);
+        let (entry, _watcher) = watched(&dir).await;
+
+        // what every sync does first
+        history::refs(&dir).unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!entry.dirty.load(Ordering::SeqCst));
+
+        // while a new commit still does
+        let tip = repo.head().unwrap().target().unwrap();
+        commit(&repo, "more", &[tip]);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(entry.dirty.load(Ordering::SeqCst));
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn the_watcher_does_not_follow_a_linked_directory() {
+        let (dir, _repo, _refs) = repository("linked", 1);
+        let outside = scratch("linked-outside");
+        std::fs::create_dir_all(outside.join("deep")).unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join(".git/refs/x")).unwrap();
+        let (entry, _watcher) = watched(&dir).await;
+
+        std::fs::write(outside.join("deep/file"), "changed").unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!entry.dirty.load(Ordering::SeqCst));
+
+        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[tokio::test]
     #[ignore = "reads a real repository; set VOGT_REPO and VOGT_CACHE to run"]
-    fn measure_a_real_repository() {
+    async fn measure_a_real_repository() {
         use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
         let path = std::env::var("VOGT_REPO").unwrap();
         let file = std::env::var("VOGT_CACHE").unwrap();
         let _ = std::fs::remove_file(&file);
-        tauri::async_runtime::block_on(async {
-            let pool = sqlx::sqlite::SqlitePoolOptions::new()
-                .max_connections(4)
-                .connect_with(
-                    SqliteConnectOptions::new()
-                        .filename(&file)
-                        .create_if_missing(true)
-                        .journal_mode(SqliteJournalMode::Wal)
-                        .synchronous(SqliteSynchronous::Normal),
-                )
-                .await
-                .unwrap();
-            // the mode `cache::open` gives a new file, which every write pays for
-            maintenance::incremental(&pool).await.unwrap();
-            cache::prepare(&pool).await.unwrap();
-            let path = Path::new(&path);
-            let refs = history::refs(path).unwrap();
-            let start = Instant::now();
-            walk(
-                &pool,
-                path,
-                &refs,
-                BATCH,
-                &|version, indexed, laid, complete| {
-                    eprintln!(
-                        "round v{version}: indexed {indexed}, laid {laid}, complete {complete} ({:.1}s)",
-                        start.elapsed().as_secs_f32()
-                    );
-                },
-                &|| false,
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(4)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(&file)
+                    .create_if_missing(true)
+                    .journal_mode(SqliteJournalMode::Wal)
+                    .synchronous(SqliteSynchronous::Normal),
             )
             .await
             .unwrap();
-            eprintln!("walk done in {:.1}s", start.elapsed().as_secs_f32());
-            let progress = cache::progress(&pool).await.unwrap();
-            eprintln!(
-                "progress: indexed {} laid {} complete {}",
-                progress.indexed, progress.laid, progress.complete
-            );
-        });
+        // the mode `cache::open` gives a new file, which every write pays for
+        maintenance::incremental(&pool).await.unwrap();
+        cache::prepare(&pool).await.unwrap();
+        let path = Path::new(&path);
+        let refs = history::refs(path).unwrap();
+        let start = Instant::now();
+        walk(
+            &pool,
+            path,
+            &refs,
+            BATCH,
+            &|version, indexed, laid, complete| {
+                eprintln!(
+                    "round v{version}: indexed {indexed}, laid {laid}, complete {complete} ({:.1}s)",
+                    start.elapsed().as_secs_f32()
+                );
+            },
+            &|| false,
+        )
+        .await
+        .unwrap();
+        eprintln!("walk done in {:.1}s", start.elapsed().as_secs_f32());
+        let progress = cache::progress(&pool).await.unwrap();
+        eprintln!(
+            "progress: indexed {} laid {} complete {}",
+            progress.indexed, progress.laid, progress.complete
+        );
     }
 }

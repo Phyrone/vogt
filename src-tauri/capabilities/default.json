@@ -25,7 +25,6 @@
       ]
     },
     "sql:default",
-    "sql:allow-execute",
-    "store:default"
+    "sql:allow-execute"
   ]
 }

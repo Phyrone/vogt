@@ -18,6 +18,9 @@ import type { Commit, FileChange, HistoryWindow, Repository } from './types.ts';
 
 export const WORKING = 'working-changes';
 
+/** How long a failed refresh waits before it is tried once more, in milliseconds. */
+const RETRY = 1000;
+
 /** The state of one open repository, shared by the repository's toolbar and its pages. */
 export class RepoSession {
 	user = $state('');
@@ -40,6 +43,10 @@ export class RepoSession {
 	#db: RepoDatabase | null;
 	/** The changed version a refresh is already running for. */
 	#asked = 0;
+	/** The masked views asked for at `#viewsOf`, by their lines, so a mask is laid out once. */
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- bookkeeping nothing is drawn from
+	#views = new Map<string, Promise<ViewInfo>>();
+	#viewsOf = 0;
 
 	/** The synthetic history: newest first; uncommitted work, when there is any, is the first row. */
 	#listed = $derived.by((): Commit[] => {
@@ -104,7 +111,24 @@ export class RepoSession {
 	/** Listens for the backend's updates to this repository; returns how to stop. */
 	async listen(): Promise<UnlistenFn> {
 		if (!isTauri()) return () => {};
-		return listen<Changed>('repo-changed', (event) => {
+		let retry: ReturnType<typeof setTimeout> | undefined;
+		const reread = (asked: number, retried = false) => {
+			this.#asked = asked;
+			this.refresh().catch((reason) => {
+				console.error('vogt: the history could not be read again', reason);
+				if (this.#asked !== asked) return;
+				// the backend sends one last event a round, so unless it is tried again here the history
+				// stays as it was until the refs move; when that try fails too, the next event asks
+				if (retried) {
+					this.#asked = 0;
+					return;
+				}
+				retry = setTimeout(() => {
+					if (this.#asked === asked) reread(asked, true);
+				}, RETRY);
+			});
+		};
+		const unlisten = await listen<Changed>('repo-changed', (event) => {
 			const changed = event.payload;
 			if (changed.repo !== this.repoId) return;
 			this.progress = {
@@ -115,9 +139,17 @@ export class RepoSession {
 			// `version` moves only with `lines`, in #apply; this keeps one refresh
 			// per version while it is still running
 			if (changed.version === this.version || changed.version === this.#asked) return;
-			this.#asked = changed.version;
-			void this.refresh();
+			// laying the history out again dropped every masked view; their rows are gone now,
+			// not only once the refresh is through
+			this.#views.clear();
+			reread(changed.version);
 		});
+		return () => {
+			clearTimeout(retry);
+			// a refresh still on its way is not tried again, and whoever listens next asks anew
+			this.#asked = 0;
+			unlisten();
+		};
 	}
 
 	/** Re-reads the summary after the cache moved on. */
@@ -133,10 +165,10 @@ export class RepoSession {
 			const listed = only.length
 				? this.#listed.filter((commit) => only.includes(commit.line))
 				: this.#listed;
-			return layoutWindow(listed, this.trunk, from, to);
+			return layoutWindow(listed, this.trunk, Object.keys(this.lines), from, to);
 		}
 		if (!this.#db) throw new Error('This repository’s cache is not open.');
-		const view = only.length ? await materializeView(this.repoId, only) : this.view;
+		const view = only.length ? await this.#masked(only) : this.view;
 		if (!view) throw new Error('This repository’s history is not laid out yet.');
 		const { rows, edges } = await repoWindow(this.#db, view, from, to);
 		const now = Date.now();
@@ -146,6 +178,28 @@ export class RepoSession {
 			rows: rows.map((row) => toHistoryRow(row, now)),
 			edges: edges.map(toHistoryEdge)
 		};
+	}
+
+	/** The view of the lines `only`; the chunks of one paint ask for it at the same time. */
+	#masked(only: string[]): Promise<ViewInfo> {
+		if (this.#viewsOf !== this.version) {
+			this.#views.clear();
+			this.#viewsOf = this.version;
+		}
+		const key = [...only]
+			.sort()
+			.filter((line, index, all) => line !== all[index - 1])
+			.join('\n');
+		let view = this.#views.get(key);
+		if (!view) {
+			const asked = materializeView(this.repoId, only);
+			this.#views.set(key, asked);
+			asked.catch(() => {
+				if (this.#views.get(key) === asked) this.#views.delete(key);
+			});
+			view = asked;
+		}
+		return view;
 	}
 
 	/** The row the commit `hash` sits in, of the unmasked view. */

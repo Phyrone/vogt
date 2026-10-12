@@ -1,0 +1,12 @@
+{
+	"db_name": "SQLite",
+	"query": "INSERT INTO node (view_id, row, hash, lane, line, pushed, refs)\n             SELECT ?, value ->> 'row', value ->> 'hash', value ->> 'lane',\n                    value ->> 'line', value ->> 'pushed', value ->> 'refs'\n             FROM json_each(?)",
+	"describe": {
+		"columns": [],
+		"parameters": {
+			"Right": 2
+		},
+		"nullable": []
+	},
+	"hash": "fe742101718f4f816bcc04cf10e3d90cfadc37ec681f222ee9570883a5b57d1c"
+}

@@ -1,0 +1,18 @@
+{
+	"db_name": "SQLite",
+	"query": "SELECT MAX(version) FROM migration",
+	"describe": {
+		"columns": [
+			{
+				"name": "MAX(version)",
+				"ordinal": 0,
+				"type_info": "Integer"
+			}
+		],
+		"parameters": {
+			"Right": 0
+		},
+		"nullable": [true]
+	},
+	"hash": "37022744a2d94aa75a36681da289f937f3a4f56eb9727ed2fd9cf8c8c8273a7e"
+}

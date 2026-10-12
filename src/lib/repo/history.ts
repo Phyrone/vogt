@@ -127,14 +127,18 @@ export async function materializeView(repo: string, only: string[]): Promise<Vie
 	return invoke<ViewInfo>('materialize_view', { repo, only });
 }
 
-/** The same window for commits held in the webview, which only the synthetic repository are. */
+/**
+ * The same window for commits held in the webview, which only the synthetic repository are.
+ * `lines` are the line ids in the order of `Repository.lines`.
+ */
 export function layoutWindow(
 	commits: Commit[],
 	trunk: string,
+	lines: string[],
 	from: number,
 	to: number
 ): HistoryWindow {
-	const layout = layoutGraph(commits, trunk);
+	const layout = layoutGraph(commits, trunk, lines);
 	const row = new Map(commits.map((commit, index) => [commit.hash, index]));
 	return {
 		total: commits.length,

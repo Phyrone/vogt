@@ -49,8 +49,14 @@ export interface GraphLayout {
  *
  * Each line keeps one lane for as long as it runs: `trunk` takes lane 0, every other line the
  * innermost lane that is free between where it leaves its parent line and where it rejoins.
+ * Lines that start on the same row take their lanes in the order of `lines`, the ids in the order
+ * the Rust side numbers them (`Repository.lines`); a line missing from it comes after them.
  */
-export function layoutGraph(commits: Commit[], trunk: string): GraphLayout {
+export function layoutGraph(
+	commits: Commit[],
+	trunk: string,
+	lines: readonly string[] = []
+): GraphLayout {
 	const row = new Map(commits.map((c, i) => [c.hash, i]));
 	const lineOf = new Map(commits.map((c) => [c.hash, c.line]));
 
@@ -74,9 +80,11 @@ export function layoutGraph(commits: Commit[], trunk: string): GraphLayout {
 
 	const lane = new Map<string, number>([[trunk, 0]]);
 	const taken: [number, number][][] = [[]];
+	const index = new Map(lines.map((line, i) => [line, i]));
+	const rank = (line: string) => index.get(line) ?? lines.length;
 	const order = [...spans.keys()]
 		.filter((l) => l !== trunk)
-		.sort((a, b) => spans.get(a)![0] - spans.get(b)![0]);
+		.sort((a, b) => spans.get(a)![0] - spans.get(b)![0] || rank(a) - rank(b));
 	for (const line of order) {
 		const [from, to] = spans.get(line)!;
 		let n = 1;

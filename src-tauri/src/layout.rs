@@ -215,6 +215,72 @@ mod tests {
         assert_eq!(edge.points, [[4, 2], [4, 2], [0, 3]]);
     }
 
+    #[derive(serde::Deserialize)]
+    struct Golden {
+        name: String,
+        trunk: String,
+        /// The line names; a line's index here is its index for the layout.
+        lines: Vec<String>,
+        commits: Vec<GoldenCommit>,
+        lanes: usize,
+        lane: Vec<usize>,
+        edges: Vec<GoldenEdge>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct GoldenCommit {
+        hash: String,
+        line: String,
+        parents: Vec<String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct GoldenEdge {
+        from: usize,
+        to: usize,
+        line: String,
+        points: Vec<[usize; 2]>,
+    }
+
+    /// The same fixtures are laid out by `src/lib/graph/layout.ts`, so the two
+    /// layouts cannot drift apart.
+    #[test]
+    fn the_golden_histories_are_laid_out_as_the_webview_does() {
+        let goldens: Vec<Golden> =
+            serde_json::from_str(include_str!("../../src/lib/graph/layout.golden.json")).unwrap();
+        for golden in goldens {
+            let index = |line: &str| golden.lines.iter().position(|l| l == line).unwrap();
+            let rows: Vec<Station> = golden
+                .commits
+                .iter()
+                .map(|commit| Station {
+                    line: index(&commit.line),
+                    parents: commit
+                        .parents
+                        .iter()
+                        .map(|parent| golden.commits.iter().position(|c| &c.hash == parent))
+                        .collect(),
+                })
+                .collect();
+
+            let mut layout = layout(&rows, golden.lines.len(), index(&golden.trunk));
+            assert_eq!(layout.lanes, golden.lanes, "{}", golden.name);
+            assert_eq!(layout.lane, golden.lane, "{}", golden.name);
+            layout.edges.sort_by_key(|edge| (edge.from, edge.to));
+            let expected: Vec<Edge> = golden
+                .edges
+                .into_iter()
+                .map(|edge| Edge {
+                    from: edge.from,
+                    to: edge.to,
+                    line: index(&edge.line),
+                    points: edge.points,
+                })
+                .collect();
+            assert_eq!(layout.edges, expected, "{}", golden.name);
+        }
+    }
+
     #[test]
     fn a_parent_outside_the_rows_draws_no_edge() {
         let rows = [Station {

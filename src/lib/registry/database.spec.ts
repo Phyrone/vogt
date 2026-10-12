@@ -2,9 +2,11 @@ import { expect, test, vi } from 'vitest';
 import { initDatabase } from '#lib/db/index.ts';
 import { database } from './database.ts';
 
-// the Tauri side of the registry: nothing to call but the cache removal
+// the Tauri side of the registry: nothing to call but the sync and the cache removal
 const { invoke } = vi.hoisted(() => ({
-	invoke: vi.fn(async () => '/tmp/never-opened.db')
+	invoke: vi.fn<(command: string, args?: unknown) => Promise<string>>(
+		async () => '/tmp/never-opened.db'
+	)
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -60,4 +62,72 @@ test('the registry keeps workspaces and their repositories', async () => {
 		'Could not delete the cache file'
 	);
 	expect((await database.listWorkspaces())[1]!.repos).toEqual([web]);
+});
+
+test('a repository is forgotten only once the sync on its way is done', async () => {
+	await initDatabase();
+	const work = await database.createWorkspace('Work');
+	const api = await database.addRepo(work.id, '/home/me/code/api');
+	const commands = () => invoke.mock.calls.map(([command]) => command);
+	invoke.mockClear();
+
+	// the startup sync still lists the repository when it is removed; were it forgotten first,
+	// the sync would open its cache again
+	const sync = Promise.withResolvers<string>();
+	invoke.mockReturnValueOnce(sync.promise);
+	const synced = database.syncRepositories();
+	const removed = database.removeRepo(work.id, api.id);
+	await new Promise((done) => setTimeout(done, 0));
+	expect(commands()).toEqual(['sync_repositories']);
+
+	sync.resolve('');
+	await Promise.all([synced, removed]);
+	expect(commands()).toEqual(['sync_repositories', 'forget_repo']);
+});
+
+test('the caches are rebuilt only once the sync on its way has opened them', async () => {
+	await initDatabase();
+	const commands = () => invoke.mock.calls.map(([command]) => command);
+	invoke.mockClear();
+
+	// the startup sync is still opening the caches when the rebuild is asked for; the backend
+	// rebuilds the caches it has open, so it must wait for the sync
+	const sync = Promise.withResolvers<string>();
+	invoke.mockReturnValueOnce(sync.promise);
+	const synced = database.syncRepositories();
+	const rebuilt = database.rebuildCaches();
+	await new Promise((done) => setTimeout(done, 0));
+	expect(commands()).toEqual(['sync_repositories']);
+
+	sync.resolve('');
+	await Promise.all([synced, rebuilt]);
+	expect(commands()).toEqual(['sync_repositories', 'rebuild_caches']);
+});
+
+test('a sync after one of two removals does not list the second one again', async () => {
+	await initDatabase();
+	const work = await database.createWorkspace('Work');
+	const api = await database.addRepo(work.id, '/home/me/code/api');
+	const web = await database.addRepo(work.id, '/home/me/code/web');
+	invoke.mockClear();
+
+	// both are removed at once; the first removal's reload asks for a sync while the second waits
+	const first = Promise.withResolvers<string>();
+	const second = Promise.withResolvers<string>();
+	invoke.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+	const removedApi = database.removeRepo(work.id, api.id);
+	const removedWeb = database.removeRepo(work.id, web.id);
+	first.resolve('');
+	await removedApi;
+	const synced = database.syncRepositories();
+	second.resolve('');
+	await Promise.all([removedWeb, synced]);
+
+	// were the list read before the second removal was done, it would open that cache again
+	expect(invoke.mock.calls).toEqual([
+		['forget_repo', { workspace: work.id, repo: api.id }],
+		['forget_repo', { workspace: work.id, repo: web.id }],
+		['sync_repositories', { list: [] }]
+	]);
+	expect((await database.listWorkspaces()).find((w) => w.id === work.id)!.repos).toEqual([]);
 });

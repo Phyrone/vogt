@@ -23,7 +23,7 @@ use std::{collections::HashMap, collections::HashSet, path::PathBuf, time::Durat
 
 use serde::Serialize;
 use sqlx::{
-    Pool, QueryBuilder, Sqlite,
+    Pool, Sqlite, SqliteConnection,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 use tauri::{AppHandle, Manager};
@@ -38,11 +38,19 @@ pub struct Cache {
 }
 
 /// Where the cache of the repository `repo` in the workspace `workspace` lives.
+///
+/// The ids come from the webview and end up in a path that `remove` deletes,
+/// so anything but the UUIDs the registry hands out is refused.
 pub fn file<R: tauri::Runtime>(
     app: &AppHandle<R>,
     workspace: &str,
     repo: &str,
 ) -> Result<PathBuf, String> {
+    for id in [workspace, repo] {
+        if !is_uuid(id) {
+            return Err(format!("{id:?} is not a registry id."));
+        }
+    }
     let dir = app
         .path()
         .app_cache_dir()
@@ -51,6 +59,16 @@ pub fn file<R: tauri::Runtime>(
         .join(workspace)
         .join("repo");
     Ok(dir.join(format!("{repo}.db")))
+}
+
+/// Whether `id` has the shape of a UUID, `8-4-4-4-12` hex digits: the ids the
+/// registry generates with `crypto.randomUUID()`.
+fn is_uuid(id: &str) -> bool {
+    id.len() == 36
+        && id.char_indices().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => c == '-',
+            _ => c.is_ascii_hexdigit(),
+        })
 }
 
 /// The freedesktop cache directory tag: readers that see it know everything
@@ -121,17 +139,25 @@ pub async fn open<R: tauri::Runtime>(
 pub async fn prepare(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     // `user_version` was the hand-written schema's marker; the migrations do
     // not use it, so a non-zero value means the file is from before them
+    // constant pragmas, which no schema describes
+    #[allow(clippy::disallowed_methods)]
     let legacy: i64 = sqlx::query_scalar("PRAGMA user_version")
         .fetch_one(pool)
         .await?;
     if legacy != 0 {
         reset(pool).await?;
+        #[allow(clippy::disallowed_methods)]
         sqlx::raw_sql("PRAGMA user_version = 0")
             .execute(pool)
             .await?;
     }
 
     if let Err(failure) = migrate(pool).await {
+        // another connection holding the file says nothing about the schema,
+        // so it is no reason to throw the cache away
+        if busy(&failure) {
+            return Err(failure);
+        }
         // the migrations run one statement at a time, so an interruption can
         // leave half a schema behind; the cache is derived, so start over once
         eprintln!("vogt: rebuilding a repository cache after a failed migration: {failure}");
@@ -141,9 +167,23 @@ pub async fn prepare(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// Whether `error` is SQLite reporting that another connection holds the file:
+/// `SQLITE_BUSY` or `SQLITE_LOCKED`, in any of their extended forms.
+fn busy(error: &sqlx::Error) -> bool {
+    let sqlx::Error::Database(error) = error else {
+        return false;
+    };
+    error
+        .code()
+        .and_then(|code| code.parse::<i32>().ok())
+        .is_some_and(|code| matches!(code & 0xff, 5 | 6))
+}
+
 /// Empties every table of a cache file; the frontend's connection may be
 /// open, so the tables are dropped rather than the file deleted.
-async fn reset(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
+// constant DDL that drops the schema the query macros check against
+#[allow(clippy::disallowed_methods)]
+pub async fn reset(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(
         "DROP TABLE IF EXISTS commits;
          DROP TABLE IF EXISTS pending;
@@ -158,6 +198,15 @@ async fn reset(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// The table [`migrate`] records the applied migrations in. It is created
+/// here rather than by a migration, so it exists before the first one is
+/// recorded in it; `scripts/repo-schema.mjs` creates the same table for the
+/// query macros to check against, and a test holds the two to the same text.
+const MIGRATION_TABLE: &str = "CREATE TABLE IF NOT EXISTS migration (
+    version     INTEGER PRIMARY KEY,
+    description TEXT NOT NULL
+)";
+
 /// Applies every migration the file has not seen yet.
 ///
 /// One statement per call, deliberately without a transaction: a `&mut`
@@ -165,11 +214,11 @@ async fn reset(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
 /// that await this, and a cache file can be built again when this is
 /// interrupted.
 async fn migrate(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
-    let applied: i64 = match sqlx::query_scalar::<_, i64>("SELECT MAX(version) FROM migration")
+    let applied: i64 = match sqlx::query_scalar!("SELECT MAX(version) FROM migration")
         .fetch_one(pool)
         .await
     {
-        Ok(applied) => applied,
+        Ok(applied) => applied.unwrap_or(0),
         // the first migration creates the bookkeeping table
         Err(sqlx::Error::Database(e)) if e.message().contains("no such table") => 0,
         Err(e) => return Err(e),
@@ -178,24 +227,20 @@ async fn migrate(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
         if migration.version <= applied {
             continue;
         }
+        // the migrations are what the query macros check against
+        #[allow(clippy::disallowed_methods)]
         sqlx::raw_sql(migration.sql).execute(pool).await?;
         if migration.version == 1 {
-            // created here rather than by a migration, so it exists before the
-            // first one is recorded in it
-            sqlx::raw_sql(
-                "CREATE TABLE IF NOT EXISTS migration (
-                     version     INTEGER PRIMARY KEY,
-                     description TEXT NOT NULL
-                 )",
-            )
-            .execute(pool)
-            .await?;
+            #[allow(clippy::disallowed_methods)]
+            sqlx::raw_sql(MIGRATION_TABLE).execute(pool).await?;
         }
-        sqlx::query("INSERT INTO migration (version, description) VALUES (?, ?)")
-            .bind(migration.version)
-            .bind(migration.description)
-            .execute(pool)
-            .await?;
+        sqlx::query!(
+            "INSERT INTO migration (version, description) VALUES (?, ?)",
+            migration.version,
+            migration.description
+        )
+        .execute(pool)
+        .await?;
     }
     Ok(())
 }
@@ -224,7 +269,7 @@ pub async fn remove<R: tauri::Runtime>(
 
 /// A commit as it is stored: the facts git knows, and nothing about how it is
 /// drawn.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Fact {
     pub hash: String,
     pub time: i64,
@@ -235,37 +280,39 @@ pub struct Fact {
 }
 
 /// Remembers `facts` and adds them to the work list, in one transaction.
-///
-/// The inserts are built rather than checked at compile time: they take as
-/// many values as a chunk holds.
 pub async fn enqueue(pool: &Pool<Sqlite>, facts: &[Fact]) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await?;
-    for chunk in facts.chunks(2_000) {
-        QueryBuilder::new(
-            "INSERT OR IGNORE INTO commits
-             (hash, time, parents, subject, author, body, expanded) ",
-        )
-        .push_values(chunk, |mut row, fact| {
-            row.push_bind(&fact.hash)
-                .push_bind(fact.time)
-                .push_bind(serde_json::to_string(&fact.parents).unwrap_or_default())
-                .push_bind(&fact.subject)
-                .push_bind(&fact.author)
-                .push_bind(fact.body.as_deref())
-                .push_bind(0);
-        })
-        .build()
-        .execute(&mut *transaction)
-        .await?;
-        QueryBuilder::new("INSERT OR IGNORE INTO pending (hash, time) ")
-            .push_values(chunk, |mut row, fact| {
-                row.push_bind(&fact.hash).push_bind(fact.time);
-            })
-            .build()
-            .execute(&mut *transaction)
-            .await?;
-    }
+    remember(&mut transaction, facts).await?;
     transaction.commit().await
+}
+
+/// Inserts `facts` into `commits` and `pending`, leaving the ones already
+/// there alone. Each chunk goes in as one JSON array, so the statements stay
+/// fixed and checked however many rows a chunk holds; `parents` is stored as
+/// the JSON array it arrives as. A chunk's array stays below SQLite's limit
+/// on a bound string, a billion bytes, until its commits average 2 MB each.
+async fn remember(connection: &mut SqliteConnection, facts: &[Fact]) -> Result<(), sqlx::Error> {
+    for chunk in facts.chunks(500) {
+        let json = serde_json::to_string(chunk).unwrap_or_default();
+        sqlx::query!(
+            "INSERT OR IGNORE INTO commits
+             (hash, time, parents, subject, author, body, expanded)
+             SELECT value ->> 'hash', value ->> 'time', value -> 'parents',
+                    value ->> 'subject', value ->> 'author', value ->> 'body', 0
+             FROM json_each(?)",
+            json
+        )
+        .execute(&mut *connection)
+        .await?;
+        sqlx::query!(
+            "INSERT OR IGNORE INTO pending (hash, time)
+             SELECT value ->> 'hash', value ->> 'time' FROM json_each(?)",
+            json
+        )
+        .execute(&mut *connection)
+        .await?;
+    }
+    Ok(())
 }
 
 /// The commits whose parents have not been read yet, newest first.
@@ -338,31 +385,7 @@ pub async fn expand(
     )
     .execute(&mut *transaction)
     .await?;
-    for chunk in parents.chunks(2_000) {
-        QueryBuilder::new(
-            "INSERT OR IGNORE INTO commits
-             (hash, time, parents, subject, author, body, expanded) ",
-        )
-        .push_values(chunk, |mut row, fact| {
-            row.push_bind(&fact.hash)
-                .push_bind(fact.time)
-                .push_bind(serde_json::to_string(&fact.parents).unwrap_or_default())
-                .push_bind(&fact.subject)
-                .push_bind(&fact.author)
-                .push_bind(fact.body.as_deref())
-                .push_bind(0);
-        })
-        .build()
-        .execute(&mut *transaction)
-        .await?;
-        QueryBuilder::new("INSERT OR IGNORE INTO pending (hash, time) ")
-            .push_values(chunk, |mut row, fact| {
-                row.push_bind(&fact.hash).push_bind(fact.time);
-            })
-            .build()
-            .execute(&mut *transaction)
-            .await?;
-    }
+    remember(&mut transaction, parents).await?;
     transaction.commit().await
 }
 
@@ -376,6 +399,14 @@ pub async fn meta(pool: &Pool<Sqlite>, key: &str) -> Result<Option<String>, sqlx
 /// Writes `entries` into the `meta` table.
 pub async fn set_meta(pool: &Pool<Sqlite>, entries: &[(&str, String)]) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await?;
+    write_meta(&mut transaction, entries).await?;
+    transaction.commit().await
+}
+
+async fn write_meta(
+    connection: &mut SqliteConnection,
+    entries: &[(&str, String)],
+) -> Result<(), sqlx::Error> {
     for (key, value) in entries {
         sqlx::query!(
             "INSERT INTO meta (key, value) VALUES (?, ?)
@@ -383,13 +414,14 @@ pub async fn set_meta(pool: &Pool<Sqlite>, entries: &[(&str, String)]) -> Result
             key,
             value
         )
-        .execute(&mut *transaction)
+        .execute(&mut *connection)
         .await?;
     }
-    transaction.commit().await
+    Ok(())
 }
 
 /// One commit as a row of a view: where it sits in the list and in the graph.
+#[derive(Serialize)]
 pub struct NodeRow {
     pub row: i64,
     pub hash: String,
@@ -400,6 +432,7 @@ pub struct NodeRow {
 }
 
 /// A stretch of a line between two commits.
+#[derive(Serialize)]
 pub struct EdgeRow {
     pub from: i64,
     pub to: i64,
@@ -407,8 +440,10 @@ pub struct EdgeRow {
     pub points: String,
 }
 
-/// Replaces the laid-out rows and edges of a view, and records the view's
-/// size, in one transaction; readers see the old view until it commits.
+/// Replaces the laid-out rows and edges of a view, records the view's size
+/// and writes the `meta` entries that describe it, such as its line list, in
+/// one transaction; readers see the old view until it commits, and never new
+/// rows with the old lines.
 ///
 /// shortcut: the whole view is written again on every round. Most of it is
 /// unchanged, but a new commit can move lanes and lines anywhere below it, so
@@ -424,6 +459,7 @@ pub async fn save_view(
     version: i64,
     nodes: &[NodeRow],
     edges: &[EdgeRow],
+    meta: &[(&str, String)],
 ) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await?;
     sqlx::query!("DELETE FROM node WHERE view_id = ?", id)
@@ -432,33 +468,32 @@ pub async fn save_view(
     sqlx::query!("DELETE FROM edge WHERE view_id = ?", id)
         .execute(&mut *transaction)
         .await?;
+    // a chunk goes in as one JSON array, as in `remember`; `pushed` arrives as
+    // a JSON boolean and `->>` turns it into 0 or 1
     for chunk in nodes.chunks(1_500) {
-        QueryBuilder::new("INSERT INTO node (view_id, row, hash, lane, line, pushed, refs) ")
-            .push_values(chunk, |mut row, node| {
-                row.push_bind(id)
-                    .push_bind(node.row)
-                    .push_bind(&node.hash)
-                    .push_bind(node.lane)
-                    .push_bind(&node.line)
-                    .push_bind(node.pushed)
-                    .push_bind(&node.refs);
-            })
-            .build()
-            .execute(&mut *transaction)
-            .await?;
+        let json = serde_json::to_string(chunk).unwrap_or_default();
+        sqlx::query!(
+            "INSERT INTO node (view_id, row, hash, lane, line, pushed, refs)
+             SELECT ?, value ->> 'row', value ->> 'hash', value ->> 'lane',
+                    value ->> 'line', value ->> 'pushed', value ->> 'refs'
+             FROM json_each(?)",
+            id,
+            json
+        )
+        .execute(&mut *transaction)
+        .await?;
     }
     for chunk in edges.chunks(1_500) {
-        QueryBuilder::new("INSERT OR REPLACE INTO edge (view_id, \"from\", \"to\", line, points) ")
-            .push_values(chunk, |mut row, edge| {
-                row.push_bind(id)
-                    .push_bind(edge.from)
-                    .push_bind(edge.to)
-                    .push_bind(&edge.line)
-                    .push_bind(&edge.points);
-            })
-            .build()
-            .execute(&mut *transaction)
-            .await?;
+        let json = serde_json::to_string(chunk).unwrap_or_default();
+        sqlx::query!(
+            "INSERT OR REPLACE INTO edge (view_id, \"from\", \"to\", line, points)
+             SELECT ?, value ->> 'from', value ->> 'to', value ->> 'line', value ->> 'points'
+             FROM json_each(?)",
+            id,
+            json
+        )
+        .execute(&mut *transaction)
+        .await?;
     }
     let only = serde_json::to_string(only).unwrap_or_default();
     let total = total as i64;
@@ -491,6 +526,7 @@ pub async fn save_view(
             .execute(&mut *transaction)
             .await?;
     }
+    write_meta(&mut transaction, meta).await?;
     transaction.commit().await
 }
 
@@ -610,92 +646,260 @@ mod tests {
         pool
     }
 
-    #[test]
-    fn facts_come_back_as_they_were_stored() {
-        tauri::async_runtime::block_on(async {
-            let pool = pool().await;
-            let stored = vec![fact(3, 30, &[2, 1]), fact(1, -10, &[])];
-            enqueue(&pool, &stored).await.unwrap();
-            // enqueuing again changes nothing
-            enqueue(&pool, &stored).await.unwrap();
+    #[tokio::test]
+    async fn facts_come_back_as_they_were_stored() {
+        let pool = pool().await;
+        let stored = vec![fact(3, 30, &[2, 1]), fact(1, -10, &[])];
+        enqueue(&pool, &stored).await.unwrap();
+        // enqueuing again changes nothing
+        enqueue(&pool, &stored).await.unwrap();
 
-            let read = sqlx::query!(
-                "SELECT hash, time, parents, subject FROM commits ORDER BY time DESC, hash"
-            )
+        let read = sqlx::query!(
+            "SELECT hash, time, parents, subject FROM commits ORDER BY time DESC, hash"
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(read.len(), 2);
+        assert_eq!(read[0].hash, stored[0].hash);
+        assert_eq!(read[0].time, 30);
+        let parents: Vec<String> = serde_json::from_str(&read[0].parents).unwrap();
+        assert_eq!(parents, stored[0].parents);
+        assert_eq!(read[0].subject, "subject 3");
+        assert_eq!(pending(&pool).await.unwrap().len(), 2);
+        // the parents column keeps its compact JSON form, a missing body
+        // stays NULL and a written one comes back as it was
+        let row = sqlx::query!("SELECT parents, body, expanded FROM commits WHERE time = 30")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            row.parents,
+            serde_json::to_string(&stored[0].parents).unwrap()
+        );
+        assert_eq!((row.body, row.expanded), (None, 0));
+        let mut with_body = fact(4, 40, &[]);
+        with_body.body = Some("why \"it\" matters\n".into());
+        enqueue(&pool, std::slice::from_ref(&with_body))
+            .await
+            .unwrap();
+        let body = sqlx::query_scalar!("SELECT body FROM commits WHERE time = 40")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(body, with_body.body);
+
+        let known = known(&pool, &[stored[0].hash.clone(), "nope".into()])
+            .await
+            .unwrap();
+        assert!(known.contains(&stored[0].hash));
+        assert_eq!(known.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn expanding_marks_commits_and_remembers_their_parents() {
+        let pool = pool().await;
+        let child = fact(2, 20, &[1]);
+        enqueue(&pool, std::slice::from_ref(&child)).await.unwrap();
+
+        let parent = fact(1, 10, &[]);
+        expand(
+            &pool,
+            std::slice::from_ref(&child.hash),
+            std::slice::from_ref(&parent),
+        )
+        .await
+        .unwrap();
+
+        // the popped commit is done; its parent is now the work list
+        assert_eq!(
+            pending(&pool).await.unwrap(),
+            [(parent.hash.clone(), parent.time)]
+        );
+        let count = sqlx::query_scalar!("SELECT COUNT(*) FROM commits")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 2);
+        let expanded = sqlx::query!("SELECT hash FROM commits WHERE expanded = 1")
             .fetch_all(&pool)
             .await
             .unwrap();
-            assert_eq!(read.len(), 2);
-            assert_eq!(read[0].hash, stored[0].hash);
-            assert_eq!(read[0].time, 30);
-            let parents: Vec<String> = serde_json::from_str(&read[0].parents).unwrap();
-            assert_eq!(parents, stored[0].parents);
-            assert_eq!(read[0].subject, "subject 3");
-            assert_eq!(pending(&pool).await.unwrap().len(), 2);
-
-            let known = known(&pool, &[stored[0].hash.clone(), "nope".into()])
-                .await
-                .unwrap();
-            assert!(known.contains(&stored[0].hash));
-            assert_eq!(known.len(), 1);
-        });
+        assert_eq!(expanded.len(), 1);
+        assert_eq!(expanded[0].hash, child.hash);
     }
 
-    #[test]
-    fn expanding_marks_commits_and_remembers_their_parents() {
-        tauri::async_runtime::block_on(async {
-            let pool = pool().await;
-            let child = fact(2, 20, &[1]);
-            enqueue(&pool, std::slice::from_ref(&child)).await.unwrap();
-
-            let parent = fact(1, 10, &[]);
-            expand(
-                &pool,
-                std::slice::from_ref(&child.hash),
-                std::slice::from_ref(&parent),
-            )
+    #[tokio::test]
+    // constant SQL that undoes a migration by hand
+    #[allow(clippy::disallowed_methods)]
+    async fn a_cache_another_connection_holds_is_not_rebuilt() {
+        let dir = std::env::temp_dir().join(format!("vogt-busy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let options = |timeout| {
+            SqliteConnectOptions::new()
+                .filename(dir.join("cache.db"))
+                .create_if_missing(true)
+                .journal_mode(SqliteJournalMode::Wal)
+                .busy_timeout(timeout)
+        };
+        let holder = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options(Duration::from_secs(10)))
+            .await
+            .unwrap();
+        prepare(&holder).await.unwrap();
+        set_meta(&holder, &[("indexed", "1".into())]).await.unwrap();
+        // the line index's migration is undone, so opening the file again
+        // has a write to make
+        sqlx::raw_sql("DROP INDEX node_line; DELETE FROM migration WHERE version = 2")
+            .execute(&holder)
             .await
             .unwrap();
 
-            // the popped commit is done; its parent is now the work list
-            assert_eq!(
-                pending(&pool).await.unwrap(),
-                [(parent.hash.clone(), parent.time)]
-            );
-            let count = sqlx::query_scalar!("SELECT COUNT(*) FROM commits")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-            assert_eq!(count, 2);
-            let expanded = sqlx::query!("SELECT hash FROM commits WHERE expanded = 1")
-                .fetch_all(&pool)
-                .await
-                .unwrap();
-            assert_eq!(expanded.len(), 1);
-            assert_eq!(expanded[0].hash, child.hash);
-        });
+        // the holder keeps the write lock until the opener has given up:
+        // how long SQLite's busy handler really waits differs between
+        // platforms, so the test does not race a timer against it
+        let lock = holder.begin_with("BEGIN IMMEDIATE").await.unwrap();
+        let opener = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options(Duration::from_millis(100)))
+            .await
+            .unwrap();
+        let failure = prepare(&opener).await.unwrap_err();
+        assert!(busy(&failure), "{failure}");
+        lock.commit().await.unwrap();
+
+        // nothing was dropped, and the file opens once the lock is gone
+        prepare(&opener).await.unwrap();
+        assert_eq!(
+            meta(&opener, "indexed").await.unwrap().as_deref(),
+            Some("1")
+        );
+
+        maintenance::close(&opener).await;
+        maintenance::close(&holder).await;
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn the_line_queries_use_the_line_index() {
-        tauri::async_runtime::block_on(async {
-            let pool = pool().await;
-            for query in [
-                "EXPLAIN QUERY PLAN
-                 SELECT COUNT(*) FROM node WHERE view_id = 'all' AND line = ?",
-                "EXPLAIN QUERY PLAN
-                 SELECT row, hash, line, pushed, refs FROM node
-                 WHERE view_id = 'all' AND line IN (SELECT value FROM json_each(?))",
-            ] {
-                let rows = sqlx::query(query).fetch_all(&pool).await.unwrap();
-                let plan = rows
-                    .iter()
-                    .map(|row| row.get::<String, _>(3))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                assert!(plan.contains("node_line"), "{plan}");
-            }
-        });
+    fn the_schema_script_creates_the_same_migration_table() {
+        // the whole template literal, so a column added to either side shows
+        // a Windows checkout may give the script CRLF line ends, while rustc
+        // reads the Rust literal with LF ones
+        let script = include_str!("../../scripts/repo-schema.mjs").replace("\r\n", "\n");
+        assert!(
+            script.contains(&format!("sqlite.exec(`{MIGRATION_TABLE}`);")),
+            "scripts/repo-schema.mjs must create MIGRATION_TABLE as it is"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_view_is_saved_with_its_meta() {
+        let pool = pool().await;
+        let node = |row: i64, pushed| NodeRow {
+            row,
+            hash: format!("hash {row}"),
+            lane: 0,
+            line: "main".into(),
+            pushed,
+            refs: "[]".into(),
+        };
+        let edge = EdgeRow {
+            from: 0,
+            to: 1,
+            line: "main".into(),
+            points: "[[0,0]]".into(),
+        };
+        save_view(
+            &pool,
+            ViewInfo::ALL,
+            &[],
+            2,
+            1,
+            7,
+            &[node(0, false), node(1, true)],
+            std::slice::from_ref(&edge),
+            &[("lines", "[\"main\"]".into())],
+        )
+        .await
+        .unwrap();
+
+        let pushed = sqlx::query_scalar!("SELECT pushed FROM node ORDER BY row")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(pushed, [0, 1]);
+        let saved = sqlx::query!(r#"SELECT "from", "to", line, points FROM edge"#)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            (saved.from, saved.to, saved.line, saved.points),
+            (0, 1, edge.line, edge.points)
+        );
+        assert_eq!(
+            view(&pool, ViewInfo::ALL).await.unwrap().unwrap().version,
+            7
+        );
+        assert_eq!(
+            meta(&pool, "lines").await.unwrap().as_deref(),
+            Some("[\"main\"]")
+        );
+    }
+
+    #[tokio::test]
+    // asks for query plans, which the query macros cannot run
+    #[allow(clippy::disallowed_methods)]
+    async fn the_line_queries_use_the_line_index() {
+        let pool = pool().await;
+        for query in [
+            "EXPLAIN QUERY PLAN
+             SELECT COUNT(*) FROM node WHERE view_id = 'all' AND line = ?",
+            "EXPLAIN QUERY PLAN
+             SELECT row, hash, line, pushed, refs FROM node
+             WHERE view_id = 'all' AND line IN (SELECT value FROM json_each(?))",
+        ] {
+            let rows = sqlx::query(query).fetch_all(&pool).await.unwrap();
+            let plan = rows
+                .iter()
+                .map(|row| row.get::<String, _>(3))
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(plan.contains("node_line"), "{plan}");
+        }
+    }
+
+    #[test]
+    fn only_a_uuid_names_a_cache_file() {
+        assert!(is_uuid("0f8fad5b-d9cb-469f-a165-70867728950e"));
+        assert!(is_uuid("0F8FAD5B-D9CB-469F-A165-70867728950E"));
+        for id in [
+            "",
+            "..",
+            "../..",
+            "a/b",
+            "repo",
+            "0f8fad5b-d9cb-469f-a165-70867728950",
+            "0f8fad5b-d9cb-469f-a165-70867728950e0",
+            "0f8fad5b/d9cb-469f-a165-70867728950e",
+            "../fad5b-d9cb-469f-a165-70867728950e",
+        ] {
+            assert!(!is_uuid(id), "{id:?}");
+        }
+
+        use tauri::utils::config::{AppDirectoriesOverride, AppDirectoryOverrides};
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().app.app_directories_override =
+            Some(AppDirectoriesOverride::Directories(AppDirectoryOverrides {
+                cache: Some(std::env::temp_dir().join("vogt-ids")),
+                ..Default::default()
+            }));
+        let app = tauri::test::mock_builder().build(context).unwrap();
+        let workspace = "0f8fad5b-d9cb-469f-a165-70867728950e";
+        assert!(file(app.handle(), workspace, "../../escape").is_err());
+        assert!(file(app.handle(), "..", workspace).is_err());
+        assert!(file(app.handle(), workspace, workspace).is_ok());
     }
 
     #[test]

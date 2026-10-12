@@ -1,0 +1,12 @@
+{
+	"db_name": "SQLite",
+	"query": "INSERT OR IGNORE INTO commits\n             (hash, time, parents, subject, author, body, expanded)\n             SELECT value ->> 'hash', value ->> 'time', value -> 'parents',\n                    value ->> 'subject', value ->> 'author', value ->> 'body', 0\n             FROM json_each(?)",
+	"describe": {
+		"columns": [],
+		"parameters": {
+			"Right": 1
+		},
+		"nullable": []
+	},
+	"hash": "10c62df4fbc1ad2970a9d3ac4d9196cd771f4ee8f127c6bcf34ccf8a984e2ad6"
+}

@@ -120,7 +120,7 @@ test('commits held in the webview are cut into the same windows', () => {
 		commit('root', 'main', [])
 	];
 
-	const window = layoutWindow(commits, 'main', 2, 3);
+	const window = layoutWindow(commits, 'main', ['main', 'feat'], 2, 3);
 
 	expect(window).toMatchObject({ total: 6, lanes: 2 });
 	expect(window.rows).toMatchObject([{ hash: 'm2', row: 2, lane: 0 }]);

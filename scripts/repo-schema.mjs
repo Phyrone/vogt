@@ -12,5 +12,12 @@ for (const file of readdirSync('drizzle-repo')
 	.sort()) {
 	sqlite.exec(readFileSync(`drizzle-repo/${file}`, 'utf8'));
 }
+// The table the applied migrations are recorded in. `cache::migrate` creates it by hand, not
+// through a migration, so it is added here for the queries on it to be checked; this must
+// match `MIGRATION_TABLE` in `src-tauri/src/cache.rs`.
+sqlite.exec(`CREATE TABLE IF NOT EXISTS migration (
+    version     INTEGER PRIMARY KEY,
+    description TEXT NOT NULL
+)`);
 sqlite.close();
 console.log(`Repository cache schema built at ${out}`);
