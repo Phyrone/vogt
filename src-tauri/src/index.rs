@@ -1105,7 +1105,15 @@ mod tests {
                 .await
                 .unwrap();
 
-            // a new entry on the same file, which the indexer builds again
+            // a new entry on the same file, which the indexer builds again; a
+            // slow runner may leave the old worker in a sync past the wait, and
+            // the rebuild then comes once it is through
+            for _ in 0..400 {
+                if !Arc::ptr_eq(&repos.get(REAL).unwrap(), &old) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
             let new = repos.get(REAL).expect("the repository is watched again");
             assert!(!Arc::ptr_eq(&old, &new));
             assert_eq!(new.cache.file, old.cache.file);
