@@ -996,7 +996,7 @@ mod tests {
             assert!(!file.with_extension("db-shm").exists());
 
             std::fs::remove_dir_all(dir).unwrap();
-            std::fs::remove_dir_all(root).unwrap();
+            let _ = std::fs::remove_dir_all(root);
         });
     }
 
@@ -1028,7 +1028,7 @@ mod tests {
 
             shutdown(&app.state::<Repos>()).await;
             std::fs::remove_dir_all(dir).unwrap();
-            std::fs::remove_dir_all(root).unwrap();
+            let _ = std::fs::remove_dir_all(root);
         });
     }
 
@@ -1126,7 +1126,7 @@ mod tests {
 
             shutdown(&repos).await;
             std::fs::remove_dir_all(dir).unwrap();
-            std::fs::remove_dir_all(root).unwrap();
+            let _ = std::fs::remove_dir_all(root);
         });
     }
 
@@ -1181,7 +1181,7 @@ mod tests {
 
             shutdown(&repos).await;
             std::fs::remove_dir_all(dir).unwrap();
-            std::fs::remove_dir_all(root).unwrap();
+            let _ = std::fs::remove_dir_all(root);
         });
     }
 
@@ -1318,7 +1318,7 @@ mod tests {
             maintenance::close(&closed).await;
 
             std::fs::remove_dir_all(dir).unwrap();
-            std::fs::remove_dir_all(root).unwrap();
+            let _ = std::fs::remove_dir_all(root);
         });
     }
 
@@ -1505,7 +1505,7 @@ mod tests {
 
             maintenance::close(&entry.cache.pool).await;
             std::fs::remove_dir_all(dir).unwrap();
-            std::fs::remove_dir_all(root).unwrap();
+            let _ = std::fs::remove_dir_all(root);
         });
     }
 
