@@ -103,3 +103,34 @@ test('chunks far out of view are let go and read again when they come back', asy
 	expect(asked(0)).toHaveLength(2);
 	style.remove();
 });
+
+test('a tag and a remote branch of the same name on one commit both show', async () => {
+	const rows: HistoryRow[] = [
+		{
+			...row('a', 'main', 0),
+			refs: [
+				{ kind: 'remote', label: 'origin/x' },
+				{ kind: 'tag', label: 'origin/x' }
+			]
+		}
+	];
+	const source = {
+		rows: vi.fn(async (): Promise<HistoryWindow> => ({ total: 1, lanes: 1, rows, edges: [] })),
+		locate: vi.fn(async () => null),
+		version: 1,
+		progress: { indexed: 1, laid: 1, complete: true }
+	};
+	const lines: Record<string, Line> = {
+		main: { id: 'main', name: 'main', badge: 'M', color: 'primary', remote: false }
+	};
+	const container = document.createElement('div');
+	container.style.cssText = 'display: flex; height: 480px;';
+	document.body.append(container);
+	await render(History, {
+		props: { source, lines, trunk: 'main', head: 'a', selected: null, picked: [] },
+		target: container
+	});
+
+	await expect.element(page.getByText('commit a')).toBeInTheDocument();
+	expect(page.getByText('origin/x', { exact: true }).elements()).toHaveLength(2);
+});

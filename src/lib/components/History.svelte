@@ -298,7 +298,8 @@
 											>HERE</span
 										>
 									{/if}
-									{#each commit.refs ?? [] as ref (ref.label)}
+									<!-- a tag and a remote branch can share a name -->
+									{#each commit.refs ?? [] as ref (`${ref.kind}:${ref.label}`)}
 										<span class="badge shrink-0 badge-outline signage badge-sm">{ref.label}</span>
 									{/each}
 									<span class="truncate">{commit.subject}</span>

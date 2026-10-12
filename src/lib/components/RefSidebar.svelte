@@ -104,7 +104,8 @@
 			>
 		</h2>
 		<ul class="menu hidden w-full gap-px menu-sm px-2 py-0 lg:flex">
-			{#each stashes as stash (stash)}
+			<!-- messages repeat; a stash is named by its place, stash@{i} -->
+			{#each stashes as stash, i (i)}
 				<li>
 					<button type="button" class="gap-2.5 px-2"
 						><Archive class="mx-[3px] size-4 shrink-0 opacity-60" aria-hidden="true" /><span

@@ -122,7 +122,8 @@
 			{/snippet}
 			<ul class="menu w-full p-1">
 				<li class="menu-title caps">Worktrees</li>
-				{#each worktrees as item (item.path)}
+				<!-- nothing stops two worktree entries from naming the same directory -->
+				{#each worktrees as item, i (i)}
 					<li>
 						<a
 							href="{resolve('/workspaces/[workspace]/repos/[repo]/history', {
