@@ -1,6 +1,7 @@
-import { expect, test, vi } from 'vitest';
+import { expect, onTestFinished, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
+import type { ComponentProps } from 'svelte';
 import { PITCH } from '#lib/graph/layout.ts';
 import type { HistoryRow, HistoryWindow, Line } from '#lib/repo/types.ts';
 import History from './History.svelte';
@@ -51,6 +52,31 @@ test('a row whose line has not arrived yet renders without an error', async () =
 	await expect.element(page.getByText('on fresh-branch')).toBeInTheDocument();
 });
 
+const main: Record<string, Line> = {
+	main: { id: 'main', name: 'main', badge: 'M', color: 'primary', remote: false }
+};
+
+/** Renders the history in a list that scrolls by itself; the app's stylesheet is not loaded here. */
+async function mountScrolling(props: ComponentProps<typeof History>) {
+	const style = document.createElement('style');
+	style.textContent = `
+		section[aria-label='History'] { display: flex; flex-direction: column; height: 480px; }
+		section[aria-label='History'] > .overflow-y-auto { flex: 1; min-height: 0; overflow-y: auto; }
+	`;
+	document.head.append(style);
+	const container = document.createElement('div');
+	document.body.append(container);
+	// taken out again even when an assertion failed, so the next test starts on a clean page
+	onTestFinished(() => {
+		container.remove();
+		style.remove();
+	});
+	const rendered = await render(History, { props, target: container });
+	return { ...rendered, scroller: container.querySelector<HTMLElement>('.overflow-y-auto')! };
+}
+
+const subject = (hash: string) => page.getByText(`commit ${hash}`, { exact: true });
+
 test('chunks far out of view are let go and read again when they come back', async () => {
 	const total = 2000;
 	const source = {
@@ -66,28 +92,18 @@ test('chunks far out of view are let go and read again when they come back', asy
 		version: 1,
 		progress: { indexed: total, laid: total, complete: true }
 	};
-	const lines: Record<string, Line> = {
-		main: { id: 'main', name: 'main', badge: 'M', color: 'primary', remote: false }
-	};
-	// a list that scrolls by itself; the app's stylesheet is not loaded here
-	const style = document.createElement('style');
-	style.textContent = `
-		section[aria-label='History'] { display: flex; flex-direction: column; height: 480px; }
-		section[aria-label='History'] > .overflow-y-auto { flex: 1; min-height: 0; overflow-y: auto; }
-	`;
-	document.head.append(style);
-	const container = document.createElement('div');
-	document.body.append(container);
-	await render(History, {
-		props: { source, lines, trunk: 'main', head: 'c0', selected: null, picked: [] },
-		target: container
+	const { scroller } = await mountScrolling({
+		source,
+		lines: main,
+		trunk: 'main',
+		head: 'c0',
+		selected: null,
+		picked: []
 	});
-	const subject = (hash: string) => page.getByText(`commit ${hash}`, { exact: true });
 	const asked = (from: number) => source.rows.mock.calls.filter(([start]) => start === from);
 	await expect.element(subject('c0')).toBeInTheDocument();
 	expect(asked(0)).toHaveLength(1);
 
-	const scroller = container.querySelector<HTMLElement>('.overflow-y-auto')!;
 	scroller.scrollTop = scroller.scrollHeight;
 	await expect.element(subject('c1999')).toBeInTheDocument();
 	// a chunk close to the view is held: a step up and back reads nothing twice
@@ -101,7 +117,6 @@ test('chunks far out of view are let go and read again when they come back', asy
 	scroller.scrollTop = 0;
 	await expect.element(subject('c0')).toBeInTheDocument();
 	expect(asked(0)).toHaveLength(2);
-	style.remove();
 });
 
 test('a tag and a remote branch of the same name on one commit both show', async () => {
