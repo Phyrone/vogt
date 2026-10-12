@@ -1242,16 +1242,21 @@ mod tests {
             // the next unmasked layout drops every mask; one that is asked for
             // again is built from the fresh view
             materialize(&pool, &refs, 2).await.unwrap();
-            for table in ["views", "node", "edge"] {
-                let left: i64 = sqlx::query_scalar(&format!(
-                    "SELECT COUNT(*) FROM {table} WHERE {} LIKE 'mask:%'",
-                    if table == "views" { "id" } else { "view_id" }
-                ))
+            let views = sqlx::query_scalar!("SELECT COUNT(*) FROM views WHERE id LIKE 'mask:%'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-                assert_eq!(left, 0, "{table} still holds a mask");
-            }
+            let nodes =
+                sqlx::query_scalar!("SELECT COUNT(*) FROM node WHERE view_id LIKE 'mask:%'")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            let edges =
+                sqlx::query_scalar!("SELECT COUNT(*) FROM edge WHERE view_id LIKE 'mask:%'")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!((views, nodes, edges), (0, 0, 0), "a mask is left over");
             std::fs::remove_dir_all(dir).unwrap();
         });
     }

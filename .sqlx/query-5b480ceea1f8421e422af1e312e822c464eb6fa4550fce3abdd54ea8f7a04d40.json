@@ -1,0 +1,12 @@
+{
+	"db_name": "SQLite",
+	"query": "INSERT OR REPLACE INTO edge (view_id, \"from\", \"to\", line, points)\n             SELECT ?, value ->> 'from', value ->> 'to', value ->> 'line', value ->> 'points'\n             FROM json_each(?)",
+	"describe": {
+		"columns": [],
+		"parameters": {
+			"Right": 2
+		},
+		"nullable": []
+	},
+	"hash": "5b480ceea1f8421e422af1e312e822c464eb6fa4550fce3abdd54ea8f7a04d40"
+}

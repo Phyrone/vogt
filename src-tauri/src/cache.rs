@@ -23,7 +23,7 @@ use std::{collections::HashMap, collections::HashSet, path::PathBuf, time::Durat
 
 use serde::Serialize;
 use sqlx::{
-    Pool, QueryBuilder, Sqlite,
+    Pool, Sqlite, SqliteConnection,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 use tauri::{AppHandle, Manager};
@@ -158,6 +158,15 @@ pub async fn reset(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
+/// The table [`migrate`] records the applied migrations in. It is created
+/// here rather than by a migration, so it exists before the first one is
+/// recorded in it; `scripts/repo-schema.mjs` creates the same table for the
+/// query macros to check against, and the two must match.
+const MIGRATION_TABLE: &str = "CREATE TABLE IF NOT EXISTS migration (
+    version     INTEGER PRIMARY KEY,
+    description TEXT NOT NULL
+)";
+
 /// Applies every migration the file has not seen yet.
 ///
 /// One statement per call, deliberately without a transaction: a `&mut`
@@ -165,11 +174,11 @@ pub async fn reset(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
 /// that await this, and a cache file can be built again when this is
 /// interrupted.
 async fn migrate(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
-    let applied: i64 = match sqlx::query_scalar::<_, i64>("SELECT MAX(version) FROM migration")
+    let applied: i64 = match sqlx::query_scalar!("SELECT MAX(version) FROM migration")
         .fetch_one(pool)
         .await
     {
-        Ok(applied) => applied,
+        Ok(applied) => applied.unwrap_or(0),
         // the first migration creates the bookkeeping table
         Err(sqlx::Error::Database(e)) if e.message().contains("no such table") => 0,
         Err(e) => return Err(e),
@@ -180,22 +189,15 @@ async fn migrate(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
         }
         sqlx::raw_sql(migration.sql).execute(pool).await?;
         if migration.version == 1 {
-            // created here rather than by a migration, so it exists before the
-            // first one is recorded in it
-            sqlx::raw_sql(
-                "CREATE TABLE IF NOT EXISTS migration (
-                     version     INTEGER PRIMARY KEY,
-                     description TEXT NOT NULL
-                 )",
-            )
-            .execute(pool)
-            .await?;
+            sqlx::raw_sql(MIGRATION_TABLE).execute(pool).await?;
         }
-        sqlx::query("INSERT INTO migration (version, description) VALUES (?, ?)")
-            .bind(migration.version)
-            .bind(migration.description)
-            .execute(pool)
-            .await?;
+        sqlx::query!(
+            "INSERT INTO migration (version, description) VALUES (?, ?)",
+            migration.version,
+            migration.description
+        )
+        .execute(pool)
+        .await?;
     }
     Ok(())
 }
@@ -224,7 +226,7 @@ pub async fn remove<R: tauri::Runtime>(
 
 /// A commit as it is stored: the facts git knows, and nothing about how it is
 /// drawn.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Fact {
     pub hash: String,
     pub time: i64,
@@ -235,37 +237,38 @@ pub struct Fact {
 }
 
 /// Remembers `facts` and adds them to the work list, in one transaction.
-///
-/// The inserts are built rather than checked at compile time: they take as
-/// many values as a chunk holds.
 pub async fn enqueue(pool: &Pool<Sqlite>, facts: &[Fact]) -> Result<(), sqlx::Error> {
     let mut transaction = pool.begin().await?;
-    for chunk in facts.chunks(2_000) {
-        QueryBuilder::new(
-            "INSERT OR IGNORE INTO commits
-             (hash, time, parents, subject, author, body, expanded) ",
-        )
-        .push_values(chunk, |mut row, fact| {
-            row.push_bind(&fact.hash)
-                .push_bind(fact.time)
-                .push_bind(serde_json::to_string(&fact.parents).unwrap_or_default())
-                .push_bind(&fact.subject)
-                .push_bind(&fact.author)
-                .push_bind(fact.body.as_deref())
-                .push_bind(0);
-        })
-        .build()
-        .execute(&mut *transaction)
-        .await?;
-        QueryBuilder::new("INSERT OR IGNORE INTO pending (hash, time) ")
-            .push_values(chunk, |mut row, fact| {
-                row.push_bind(&fact.hash).push_bind(fact.time);
-            })
-            .build()
-            .execute(&mut *transaction)
-            .await?;
-    }
+    remember(&mut transaction, facts).await?;
     transaction.commit().await
+}
+
+/// Inserts `facts` into `commits` and `pending`, leaving the ones already
+/// there alone. Each chunk goes in as one JSON array, so the statements stay
+/// fixed and checked however many rows a chunk holds; `parents` is stored as
+/// the JSON array it arrives as.
+async fn remember(connection: &mut SqliteConnection, facts: &[Fact]) -> Result<(), sqlx::Error> {
+    for chunk in facts.chunks(2_000) {
+        let json = serde_json::to_string(chunk).unwrap_or_default();
+        sqlx::query!(
+            "INSERT OR IGNORE INTO commits
+             (hash, time, parents, subject, author, body, expanded)
+             SELECT value ->> 'hash', value ->> 'time', value -> 'parents',
+                    value ->> 'subject', value ->> 'author', value ->> 'body', 0
+             FROM json_each(?)",
+            json
+        )
+        .execute(&mut *connection)
+        .await?;
+        sqlx::query!(
+            "INSERT OR IGNORE INTO pending (hash, time)
+             SELECT value ->> 'hash', value ->> 'time' FROM json_each(?)",
+            json
+        )
+        .execute(&mut *connection)
+        .await?;
+    }
+    Ok(())
 }
 
 /// The commits whose parents have not been read yet, newest first.
@@ -338,31 +341,7 @@ pub async fn expand(
     )
     .execute(&mut *transaction)
     .await?;
-    for chunk in parents.chunks(2_000) {
-        QueryBuilder::new(
-            "INSERT OR IGNORE INTO commits
-             (hash, time, parents, subject, author, body, expanded) ",
-        )
-        .push_values(chunk, |mut row, fact| {
-            row.push_bind(&fact.hash)
-                .push_bind(fact.time)
-                .push_bind(serde_json::to_string(&fact.parents).unwrap_or_default())
-                .push_bind(&fact.subject)
-                .push_bind(&fact.author)
-                .push_bind(fact.body.as_deref())
-                .push_bind(0);
-        })
-        .build()
-        .execute(&mut *transaction)
-        .await?;
-        QueryBuilder::new("INSERT OR IGNORE INTO pending (hash, time) ")
-            .push_values(chunk, |mut row, fact| {
-                row.push_bind(&fact.hash).push_bind(fact.time);
-            })
-            .build()
-            .execute(&mut *transaction)
-            .await?;
-    }
+    remember(&mut transaction, parents).await?;
     transaction.commit().await
 }
 
@@ -390,6 +369,7 @@ pub async fn set_meta(pool: &Pool<Sqlite>, entries: &[(&str, String)]) -> Result
 }
 
 /// One commit as a row of a view: where it sits in the list and in the graph.
+#[derive(Serialize)]
 pub struct NodeRow {
     pub row: i64,
     pub hash: String,
@@ -400,6 +380,7 @@ pub struct NodeRow {
 }
 
 /// A stretch of a line between two commits.
+#[derive(Serialize)]
 pub struct EdgeRow {
     pub from: i64,
     pub to: i64,
@@ -432,33 +413,32 @@ pub async fn save_view(
     sqlx::query!("DELETE FROM edge WHERE view_id = ?", id)
         .execute(&mut *transaction)
         .await?;
+    // a chunk goes in as one JSON array, as in `remember`; `pushed` arrives as
+    // a JSON boolean and `->>` turns it into 0 or 1
     for chunk in nodes.chunks(1_500) {
-        QueryBuilder::new("INSERT INTO node (view_id, row, hash, lane, line, pushed, refs) ")
-            .push_values(chunk, |mut row, node| {
-                row.push_bind(id)
-                    .push_bind(node.row)
-                    .push_bind(&node.hash)
-                    .push_bind(node.lane)
-                    .push_bind(&node.line)
-                    .push_bind(node.pushed)
-                    .push_bind(&node.refs);
-            })
-            .build()
-            .execute(&mut *transaction)
-            .await?;
+        let json = serde_json::to_string(chunk).unwrap_or_default();
+        sqlx::query!(
+            "INSERT INTO node (view_id, row, hash, lane, line, pushed, refs)
+             SELECT ?, value ->> 'row', value ->> 'hash', value ->> 'lane',
+                    value ->> 'line', value ->> 'pushed', value ->> 'refs'
+             FROM json_each(?)",
+            id,
+            json
+        )
+        .execute(&mut *transaction)
+        .await?;
     }
     for chunk in edges.chunks(1_500) {
-        QueryBuilder::new("INSERT OR REPLACE INTO edge (view_id, \"from\", \"to\", line, points) ")
-            .push_values(chunk, |mut row, edge| {
-                row.push_bind(id)
-                    .push_bind(edge.from)
-                    .push_bind(edge.to)
-                    .push_bind(&edge.line)
-                    .push_bind(&edge.points);
-            })
-            .build()
-            .execute(&mut *transaction)
-            .await?;
+        let json = serde_json::to_string(chunk).unwrap_or_default();
+        sqlx::query!(
+            "INSERT OR REPLACE INTO edge (view_id, \"from\", \"to\", line, points)
+             SELECT ?, value ->> 'from', value ->> 'to', value ->> 'line', value ->> 'points'
+             FROM json_each(?)",
+            id,
+            json
+        )
+        .execute(&mut *transaction)
+        .await?;
     }
     let only = serde_json::to_string(only).unwrap_or_default();
     let total = total as i64;
@@ -632,6 +612,27 @@ mod tests {
             assert_eq!(parents, stored[0].parents);
             assert_eq!(read[0].subject, "subject 3");
             assert_eq!(pending(&pool).await.unwrap().len(), 2);
+            // the parents column keeps its compact JSON form, a missing body
+            // stays NULL and a written one comes back as it was
+            let row = sqlx::query!("SELECT parents, body, expanded FROM commits WHERE time = 30")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                row.parents,
+                serde_json::to_string(&stored[0].parents).unwrap()
+            );
+            assert_eq!((row.body, row.expanded), (None, 0));
+            let mut with_body = fact(4, 40, &[]);
+            with_body.body = Some("why \"it\" matters\n".into());
+            enqueue(&pool, std::slice::from_ref(&with_body))
+                .await
+                .unwrap();
+            let body = sqlx::query_scalar!("SELECT body FROM commits WHERE time = 40")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(body, with_body.body);
 
             let known = known(&pool, &[stored[0].hash.clone(), "nope".into()])
                 .await
