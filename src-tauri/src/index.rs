@@ -365,6 +365,13 @@ pub async fn walk(
     if unchanged && progress.complete {
         return Ok(());
     }
+    if !unchanged && progress.complete {
+        // the refs moved, so the history is not whole again until this walk
+        // is through; a repository opened meanwhile shows that it is indexing
+        cache::set_meta(pool, &[("complete", "0".into())])
+            .await
+            .map_err(|e| e.to_string())?;
+    }
 
     let mut indexed = progress.indexed;
     let mut version = cache::meta(pool, "version")
@@ -958,6 +965,46 @@ mod tests {
             assert_eq!(
                 (progress.indexed, progress.laid, progress.complete),
                 (5, 5, true)
+            );
+            std::fs::remove_dir_all(dir).unwrap();
+        });
+    }
+
+    #[test]
+    fn a_walk_after_the_refs_moved_is_not_complete_until_it_is_through() {
+        tauri::async_runtime::block_on(async {
+            let (dir, repo, refs) = repository("rewalk", 3);
+            let pool = pool().await;
+            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+                .await
+                .unwrap();
+            assert!(cache::progress(&pool).await.unwrap().complete);
+
+            // a new commit, and a walk that stops after its first report
+            commit(&repo, "later", &[refs.head.unwrap()]);
+            let refs = history::refs(&dir).unwrap();
+            let reports = Mutex::new(Vec::new());
+            walk(
+                &pool,
+                &dir,
+                &refs,
+                2,
+                &|_, _, _, complete| reports.lock().unwrap().push(complete),
+                &|| !reports.lock().unwrap().is_empty(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(*reports.lock().unwrap(), [false]);
+            assert!(!cache::progress(&pool).await.unwrap().complete);
+
+            // the rest of the walk is what makes it whole again
+            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+                .await
+                .unwrap();
+            let progress = cache::progress(&pool).await.unwrap();
+            assert_eq!(
+                (progress.indexed, progress.laid, progress.complete),
+                (4, 4, true)
             );
             std::fs::remove_dir_all(dir).unwrap();
         });
