@@ -339,7 +339,12 @@ mod tests {
 
             assert!(started.elapsed() < CLOSING * 3);
             assert!(pool.is_closed());
+            // the held connection closes on its own task once it is let go;
+            // Windows refuses to delete the file while it is still open
             drop(held);
+            while pool.size() > 0 {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
             std::fs::remove_dir_all(dir).unwrap();
         });
     }
