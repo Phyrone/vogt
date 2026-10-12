@@ -267,15 +267,19 @@ async fn stop(repo: &Repo) {
     maintenance::close(&repo.cache.pool).await;
 }
 
-/// Stops every worker, gives every cache its exit pass and closes it, for the
-/// app to exit: SQLite folds a write-ahead log into its file and removes it
-/// when the last connection closes, which a process that just ends never does.
+/// Stops the workers and gives each cache whose worker stopped its exit pass,
+/// then closes it, for the app to exit: SQLite folds a write-ahead log into
+/// its file and removes it when the last connection closes, which a process
+/// that just ends never does.
 ///
-/// The exit pass takes as long as it takes; rebuilding a cache of gigabytes
-/// is the one thing that makes the exit wait noticeably, once per file. A
-/// worker in the middle of a batch is another matter: after [`SHUTDOWN`] its
-/// cache is left as it is, to SQLite's recovery and the walk's own resuming on
-/// the next start.
+/// This is no guarantee for every cache. A worker in the middle of a batch is
+/// waited for [`SHUTDOWN`] at most; after that its cache gets neither the pass
+/// nor the close and keeps its log, left to SQLite's recovery and the walk's
+/// own resuming on the next start.
+///
+/// The exit pass itself takes as long as it takes; rebuilding a cache of
+/// gigabytes is the one thing that makes the exit wait noticeably, once per
+/// file.
 pub async fn shutdown(repos: &Repos) {
     let open: Vec<Arc<Repo>> = repos
         .0

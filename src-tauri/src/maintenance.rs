@@ -7,11 +7,12 @@
 //! mode so the second part stays cheap; a file that is not in that mode yet is
 //! rebuilt once with `VACUUM`.
 //!
-//! While the app runs a pass holds back, see [`Pass::Running`]; the pass every
+//! While the app runs a pass holds back, see [`Pass::Running`]; the pass a
 //! file gets when the app exits does all of it, see [`Pass::Exit`].
 //!
 //! A repository cache is tended by its own worker in `index.rs`, between two
-//! syncs, and by `index::shutdown` on the way out. The app's database belongs
+//! syncs, and by `index::shutdown` on the way out, unless its worker does not
+//! stop in time. The app's database belongs
 //! to tauri-plugin-sql and the frontend, so [`start`] borrows the plugin's
 //! pool for it and [`on_exit`] opens the file once the plugin has let go.
 
