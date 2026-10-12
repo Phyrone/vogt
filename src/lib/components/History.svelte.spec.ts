@@ -259,6 +259,41 @@ test('a refresh at the top of the history shows the new commit at the top', asyn
 	expect(scroller.scrollTop).toBe(0);
 });
 
+test('hiding the rest of the history keeps no place in the unmasked rows', async () => {
+	const source = {
+		rows: vi.fn(async (from: number, to: number): Promise<HistoryWindow> => ({
+			total: 2000,
+			lanes: 1,
+			rows: Array.from({ length: Math.min(to, 2000) - from }, (_, index) =>
+				row(`c${from + index}`, 'main', from + index)
+			),
+			edges: []
+		})),
+		// a row of the unmasked view, which is no place in the masked one
+		locate: vi.fn(async (hash: string) => Number(hash.slice(1))),
+		version: 1,
+		progress: { indexed: 2000, laid: 2000, complete: true }
+	};
+	const { scroller } = await mountScrolling({
+		source,
+		lines: main,
+		trunk: 'main',
+		head: 'c0',
+		selected: null,
+		picked: ['main']
+	});
+	await expect.element(subject('c0')).toBeInTheDocument();
+	scroller.scrollTop = 1500 * PITCH;
+	await expect.element(subject('c1500')).toBeInTheDocument();
+
+	// the masked rows are asked for from the top
+	const asked = source.rows.mock.calls.length;
+	await page.getByRole('button', { name: 'Hide the rest' }).click();
+	await expect.poll(() => source.rows.mock.calls.slice(asked)).toContainEqual([0, 100, ['main']]);
+	await new Promise((done) => requestAnimationFrame(done));
+	expect(source.locate).not.toHaveBeenCalled();
+});
+
 test('an answer for a chunk let go while it was on its way is not kept', async () => {
 	const total = 2000;
 	const answer = (from: number, to: number, name: string): HistoryWindow => ({
