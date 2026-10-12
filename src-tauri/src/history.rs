@@ -80,7 +80,11 @@ impl Refs {
     pub fn fingerprint(&self) -> String {
         let mut lines: Vec<String> = Vec::new();
         for branch in &self.branches {
-            lines.push(format!("heads/{}\t{}", branch.name, branch.tip));
+            // setting an upstream only edits the config, but the line shows it
+            lines.push(format!(
+                "heads/{}\t{}\t{}",
+                branch.name, branch.tip, branch.remote
+            ));
         }
         if let Some(branch) = &self.head_branch {
             lines.push(format!("head-branch\t{branch}"));
@@ -1212,6 +1216,20 @@ mod tests {
         repo.set_head("refs/heads/other").unwrap();
         let switched = refs(&dir).unwrap().fingerprint();
         assert_ne!(before_switch, switched);
+
+        // an upstream moves nothing either; setting one only edits the config
+        repo.remote("origin", "https://example.com/vogt.git")
+            .unwrap();
+        repo.reference("refs/remotes/origin/main", root, false, "fetched")
+            .unwrap();
+        let before_upstream = refs(&dir).unwrap().fingerprint();
+        repo.find_branch("other", BranchType::Local)
+            .unwrap()
+            .set_upstream(Some("origin/main"))
+            .unwrap();
+        let tracked = refs(&dir).unwrap();
+        assert!(tracked.branches.iter().any(|branch| branch.remote));
+        assert_ne!(before_upstream, tracked.fingerprint());
 
         std::fs::remove_dir_all(dir).unwrap();
     }
