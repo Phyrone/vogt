@@ -1,4 +1,4 @@
-use tauri::App;
+use tauri::{App, Manager, RunEvent};
 use tauri_plugin_sql::Migration;
 
 mod cache;
@@ -6,6 +6,7 @@ mod git;
 mod history;
 mod index;
 mod layout;
+mod maintenance;
 mod update;
 
 /// The database's name for tauri-plugin-sql; `src/lib/db/index.ts` loads the same one.
@@ -37,8 +38,21 @@ pub fn run() {
             update::check_update,
             update::install_update
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let RunEvent::Exit = event {
+                // tauri-plugin-sql has closed the pools the frontend opened by
+                // now, the app's database among them; the caches' own are
+                // closed here, and every file gets its exit pass
+                tauri::async_runtime::block_on(async {
+                    index::shutdown(&app.state::<index::Repos>()).await;
+                    if let Err(failure) = maintenance::on_exit(app, DATABASE).await {
+                        eprintln!("vogt: tending the app database failed: {failure}");
+                    }
+                });
+            }
+        });
 }
 
 fn init_app<R: tauri::Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::error::Error>> {
@@ -47,6 +61,7 @@ fn init_app<R: tauri::Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::erro
     if let Err(failure) = cache::tag(app.handle()) {
         eprintln!("vogt: could not tag the cache directory: {failure}");
     }
+    maintenance::start(app.handle(), DATABASE);
     Ok(())
 }
 
