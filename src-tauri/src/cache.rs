@@ -762,15 +762,16 @@ mod tests {
                 .unwrap();
 
             // the holder takes the write lock and lets go of it after the
-            // opener's first wait ran out, but before a rebuild's would
+            // opener's first wait ran out, but before a rebuild's would; a
+            // second either way, for a loaded runner
             let lock = holder.begin_with("BEGIN IMMEDIATE").await.unwrap();
             let release = tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(1_500)).await;
+                tokio::time::sleep(Duration::from_secs(3)).await;
                 lock.commit().await.unwrap();
             });
             let opener = SqlitePoolOptions::new()
                 .max_connections(1)
-                .connect_with(options(Duration::from_secs(1)))
+                .connect_with(options(Duration::from_secs(2)))
                 .await
                 .unwrap();
             let failure = prepare(&opener).await.unwrap_err();
