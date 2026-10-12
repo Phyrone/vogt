@@ -979,6 +979,8 @@ mod tests {
     }
 
     #[test]
+    // inspects the file with constant pragmas, which no schema describes
+    #[allow(clippy::disallowed_methods)]
     fn a_synced_cache_is_tended_and_shutting_down_tends_and_closes_it() {
         tauri::async_runtime::block_on(async {
             let (dir, _repo, _refs) = repository("shutdown", 3);

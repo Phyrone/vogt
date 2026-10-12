@@ -1,0 +1,14 @@
+# SQL goes through the `sqlx::query!` family of macros, which check every
+# query against the schema at compile time (see AGENTS.md). The functions
+# below take a string built at run time instead, so they are refused; a call
+# that really needs one allows the lint on the smallest item, saying why.
+disallowed-methods = [
+  { path = "sqlx::query", reason = "use sqlx::query! so the query is checked against the schema" },
+  { path = "sqlx::query_with", reason = "use sqlx::query! so the query is checked against the schema" },
+  { path = "sqlx::query_as", reason = "use sqlx::query_as! so the query is checked against the schema" },
+  { path = "sqlx::query_as_with", reason = "use sqlx::query_as! so the query is checked against the schema" },
+  { path = "sqlx::query_scalar", reason = "use sqlx::query_scalar! so the query is checked against the schema" },
+  { path = "sqlx::query_scalar_with", reason = "use sqlx::query_scalar! so the query is checked against the schema" },
+  { path = "sqlx::raw_sql", reason = "use the sqlx::query! macros so the query is checked against the schema" },
+  { path = "sqlx::QueryBuilder::new", reason = "use the sqlx::query! macros so the query is checked against the schema" },
+]

@@ -139,11 +139,14 @@ pub async fn open<R: tauri::Runtime>(
 pub async fn prepare(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     // `user_version` was the hand-written schema's marker; the migrations do
     // not use it, so a non-zero value means the file is from before them
+    // constant pragmas, which no schema describes
+    #[allow(clippy::disallowed_methods)]
     let legacy: i64 = sqlx::query_scalar("PRAGMA user_version")
         .fetch_one(pool)
         .await?;
     if legacy != 0 {
         reset(pool).await?;
+        #[allow(clippy::disallowed_methods)]
         sqlx::raw_sql("PRAGMA user_version = 0")
             .execute(pool)
             .await?;
@@ -178,6 +181,8 @@ fn busy(error: &sqlx::Error) -> bool {
 
 /// Empties every table of a cache file; the frontend's connection may be
 /// open, so the tables are dropped rather than the file deleted.
+// constant DDL that drops the schema the query macros check against
+#[allow(clippy::disallowed_methods)]
 pub async fn reset(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(
         "DROP TABLE IF EXISTS commits;
@@ -222,8 +227,11 @@ async fn migrate(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
         if migration.version <= applied {
             continue;
         }
+        // the migrations are what the query macros check against
+        #[allow(clippy::disallowed_methods)]
         sqlx::raw_sql(migration.sql).execute(pool).await?;
         if migration.version == 1 {
+            #[allow(clippy::disallowed_methods)]
             sqlx::raw_sql(MIGRATION_TABLE).execute(pool).await?;
         }
         sqlx::query!(
@@ -725,6 +733,8 @@ mod tests {
     }
 
     #[test]
+    // constant SQL that undoes a migration by hand
+    #[allow(clippy::disallowed_methods)]
     fn a_cache_another_connection_holds_is_not_rebuilt() {
         tauri::async_runtime::block_on(async {
             let dir = std::env::temp_dir().join(format!("vogt-busy-{}", std::process::id()));
@@ -837,6 +847,8 @@ mod tests {
     }
 
     #[test]
+    // asks for query plans, which the query macros cannot run
+    #[allow(clippy::disallowed_methods)]
     fn the_line_queries_use_the_line_index() {
         tauri::async_runtime::block_on(async {
             let pool = pool().await;

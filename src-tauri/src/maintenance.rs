@@ -64,6 +64,8 @@ pub enum Pass {
 }
 
 /// One maintenance pass over the file behind `pool`.
+// constant pragmas, which no schema describes
+#[allow(clippy::disallowed_methods)]
 pub async fn tend(pool: &Pool<Sqlite>, pass: Pass) -> Result<(), sqlx::Error> {
     // `optimize` is ANALYZE for the tables that need it: the ones without
     // statistics or whose size changed tenfold since. 0x10000 checks every
@@ -113,6 +115,8 @@ struct Space {
 /// compiles that answer into the statement. The two counts read the file
 /// first, so the mode after them is the current one even when another
 /// connection has rebuilt the file since.
+// constant pragmas in one batch, which no schema describes
+#[allow(clippy::disallowed_methods)]
 async fn space(pool: &Pool<Sqlite>) -> Result<Space, sqlx::Error> {
     let rows = sqlx::raw_sql("PRAGMA page_count; PRAGMA freelist_count; PRAGMA auto_vacuum;")
         .fetch_all(pool)
@@ -134,6 +138,8 @@ async fn space(pool: &Pool<Sqlite>) -> Result<Space, sqlx::Error> {
 /// only a `VACUUM` changes it afterwards. Both statements go through one
 /// connection: the pragma only tells that connection what the next `VACUUM`
 /// should build.
+// a constant pragma and `VACUUM`, which no schema describes
+#[allow(clippy::disallowed_methods)]
 pub async fn incremental(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
     sqlx::raw_sql("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;")
         .execute(pool)
@@ -247,6 +253,8 @@ mod tests {
     }
 
     /// Fills `blobs` with `rows` rows of two pages each.
+    // a scratch table that no schema the query macros know describes
+    #[allow(clippy::disallowed_methods)]
     async fn fill(pool: &Pool<Sqlite>, rows: i64) {
         sqlx::raw_sql("CREATE TABLE IF NOT EXISTS blobs (id INTEGER PRIMARY KEY, data BLOB)")
             .execute(pool)
@@ -263,6 +271,8 @@ mod tests {
     }
 
     #[test]
+    // inspects a scratch file with SQL no schema the query macros know describes
+    #[allow(clippy::disallowed_methods)]
     fn a_file_in_another_mode_is_rebuilt_as_incremental() {
         tauri::async_runtime::block_on(async {
             let (dir, pool) = file("convert").await;
@@ -335,6 +345,8 @@ mod tests {
     }
 
     #[test]
+    // inspects a scratch file with SQL no schema the query macros know describes
+    #[allow(clippy::disallowed_methods)]
     fn a_large_file_waits_for_the_exit_to_be_rebuilt() {
         tauri::async_runtime::block_on(async {
             let (dir, pool) = file("large").await;
@@ -414,6 +426,8 @@ mod tests {
     }
 
     #[test]
+    // inspects a scratch file with SQL no schema the query macros know describes
+    #[allow(clippy::disallowed_methods)]
     fn free_pages_are_handed_back_once_they_are_worth_it() {
         tauri::async_runtime::block_on(async {
             let (dir, pool) = file("release").await;
@@ -463,6 +477,8 @@ mod tests {
     }
 
     #[test]
+    // inspects a scratch file with SQL no schema the query macros know describes
+    #[allow(clippy::disallowed_methods)]
     fn the_write_ahead_log_is_cut() {
         tauri::async_runtime::block_on(async {
             let (dir, pool) = file("log").await;
@@ -486,6 +502,8 @@ mod tests {
     }
 
     #[test]
+    // inspects a scratch file with SQL no schema the query macros know describes
+    #[allow(clippy::disallowed_methods)]
     fn the_planner_gets_statistics() {
         tauri::async_runtime::block_on(async {
             let (dir, pool) = file("analyze").await;
