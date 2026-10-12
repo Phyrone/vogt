@@ -1004,196 +1004,188 @@ mod tests {
         .collect()
     }
 
-    #[test]
-    fn a_repository_without_commits_has_its_unborn_branch_as_the_only_line() {
-        tauri::async_runtime::block_on(async {
-            let dir = scratch("unborn");
-            init(&dir);
-            let pool = cache_pool(&dir, &[]).await;
+    #[tokio::test]
+    async fn a_repository_without_commits_has_its_unborn_branch_as_the_only_line() {
+        let dir = scratch("unborn");
+        init(&dir);
+        let pool = cache_pool(&dir, &[]).await;
 
-            let refs = refs(&dir).unwrap();
-            let laid = materialize(&pool, &refs, 1).await.unwrap();
+        let refs = refs(&dir).unwrap();
+        let laid = materialize(&pool, &refs, 1).await.unwrap();
 
-            let lines: Vec<Line> =
-                serde_json::from_str(&cache::meta(&pool, "lines").await.unwrap().unwrap()).unwrap();
-            assert_eq!(laid.total, 0);
-            assert_eq!(refs.trunk, "main");
-            assert_eq!(lines.len(), 1);
-            assert_eq!(lines[0].id, "main");
-            std::fs::remove_dir_all(dir).unwrap();
-        });
+        let lines: Vec<Line> =
+            serde_json::from_str(&cache::meta(&pool, "lines").await.unwrap().unwrap()).unwrap();
+        assert_eq!(laid.total, 0);
+        assert_eq!(refs.trunk, "main");
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].id, "main");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn every_commit_gets_a_line_and_a_lane() {
-        tauri::async_runtime::block_on(async {
-            let dir = scratch("lines");
-            let repo = init(&dir);
-            let root = commit(&repo, "main", "root\n\nwhy it exists\n", "a\n", &[]);
-            let topic = commit(&repo, "topic", "topic work", "a\nb\nc\n", &[root]);
-            let second = commit(&repo, "main", "second", "a\nb\n", &[root]);
-            let merge = commit(
-                &repo,
-                "main",
-                "Merge branch 'topic'",
-                "a\nb\nc\n",
-                &[second, topic],
-            );
-            repo.find_branch("topic", BranchType::Local)
-                .unwrap()
-                .delete()
-                .unwrap();
-            let feature = commit(&repo, "feature", "feature work", "x\n", &[merge]);
-            repo.set_head("refs/heads/feature").unwrap();
-            repo.tag_lightweight("v1", &repo.find_object(merge, None).unwrap(), false)
-                .unwrap();
-
-            let pool = cache_pool(&dir, &[root, topic, second, merge, feature]).await;
-            let refs = refs(&dir).unwrap();
-            let laid = materialize(&pool, &refs, 1).await.unwrap();
-
-            assert_eq!(refs.trunk, "main");
-            assert_eq!(refs.head_branch.as_deref(), Some("feature"));
-            assert_eq!(refs.head, Some(feature));
-            assert_eq!(refs.tags, ["v1"]);
-            assert_eq!(laid.total, 5);
-            assert_eq!(
-                cache::view(&pool, ViewInfo::ALL)
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .lanes,
-                2
-            );
-            let lines: Vec<Line> =
-                serde_json::from_str(&cache::meta(&pool, "lines").await.unwrap().unwrap()).unwrap();
-            let names: Vec<(&str, bool)> = lines
-                .iter()
-                .map(|line| (line.name.as_str(), line.merged))
-                .collect();
-            assert_eq!(
-                names,
-                [("main", false), ("feature", false), ("topic", true)]
-            );
-
-            // newest first, a merge before what it merged
-            let rows = rows(&pool).await;
-            assert_eq!(rows[0].0, feature.to_string());
-            assert_eq!(rows[1].0, merge.to_string());
-            assert_eq!(rows[4].0, root.to_string());
-            let row = |id: Oid| {
-                rows.iter()
-                    .find(|(hash, ..)| hash == &id.to_string())
-                    .unwrap()
-            };
-            assert_eq!((row(feature).2.as_str(), row(feature).1), ("feature", 1));
-            assert_eq!([row(merge).1, row(second).1, row(root).1], [0; 3]);
-            assert_eq!(row(topic).2, format!("merged-{topic}"));
-            assert_eq!(row(topic).1, 1);
-            let merge_hash = merge.to_string();
-            let tagged = sqlx::query!(
-                "SELECT pushed, refs FROM node WHERE view_id = ? AND hash = ?",
-                ViewInfo::ALL,
-                merge_hash
-            )
-            .fetch_one(&pool)
-            .await
+    #[tokio::test]
+    async fn every_commit_gets_a_line_and_a_lane() {
+        let dir = scratch("lines");
+        let repo = init(&dir);
+        let root = commit(&repo, "main", "root\n\nwhy it exists\n", "a\n", &[]);
+        let topic = commit(&repo, "topic", "topic work", "a\nb\nc\n", &[root]);
+        let second = commit(&repo, "main", "second", "a\nb\n", &[root]);
+        let merge = commit(
+            &repo,
+            "main",
+            "Merge branch 'topic'",
+            "a\nb\nc\n",
+            &[second, topic],
+        );
+        repo.find_branch("topic", BranchType::Local)
+            .unwrap()
+            .delete()
             .unwrap();
-            assert_eq!(tagged.pushed, 0);
-            assert!(tagged.refs.contains("v1"));
-            let edges =
-                sqlx::query_scalar!("SELECT COUNT(*) FROM edge WHERE view_id = ?", ViewInfo::ALL)
-                    .fetch_one(&pool)
-                    .await
-                    .unwrap();
-            assert_eq!(edges, 5);
+        let feature = commit(&repo, "feature", "feature work", "x\n", &[merge]);
+        repo.set_head("refs/heads/feature").unwrap();
+        repo.tag_lightweight("v1", &repo.find_object(merge, None).unwrap(), false)
+            .unwrap();
 
-            // a mask holds only the commits made on the picked lines
-            let masked = materialize_mask(&pool, &[format!("merged-{topic}")], 1)
+        let pool = cache_pool(&dir, &[root, topic, second, merge, feature]).await;
+        let refs = refs(&dir).unwrap();
+        let laid = materialize(&pool, &refs, 1).await.unwrap();
+
+        assert_eq!(refs.trunk, "main");
+        assert_eq!(refs.head_branch.as_deref(), Some("feature"));
+        assert_eq!(refs.head, Some(feature));
+        assert_eq!(refs.tags, ["v1"]);
+        assert_eq!(laid.total, 5);
+        assert_eq!(
+            cache::view(&pool, ViewInfo::ALL)
+                .await
+                .unwrap()
+                .unwrap()
+                .lanes,
+            2
+        );
+        let lines: Vec<Line> =
+            serde_json::from_str(&cache::meta(&pool, "lines").await.unwrap().unwrap()).unwrap();
+        let names: Vec<(&str, bool)> = lines
+            .iter()
+            .map(|line| (line.name.as_str(), line.merged))
+            .collect();
+        assert_eq!(
+            names,
+            [("main", false), ("feature", false), ("topic", true)]
+        );
+
+        // newest first, a merge before what it merged
+        let rows = rows(&pool).await;
+        assert_eq!(rows[0].0, feature.to_string());
+        assert_eq!(rows[1].0, merge.to_string());
+        assert_eq!(rows[4].0, root.to_string());
+        let row = |id: Oid| {
+            rows.iter()
+                .find(|(hash, ..)| hash == &id.to_string())
+                .unwrap()
+        };
+        assert_eq!((row(feature).2.as_str(), row(feature).1), ("feature", 1));
+        assert_eq!([row(merge).1, row(second).1, row(root).1], [0; 3]);
+        assert_eq!(row(topic).2, format!("merged-{topic}"));
+        assert_eq!(row(topic).1, 1);
+        let merge_hash = merge.to_string();
+        let tagged = sqlx::query!(
+            "SELECT pushed, refs FROM node WHERE view_id = ? AND hash = ?",
+            ViewInfo::ALL,
+            merge_hash
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(tagged.pushed, 0);
+        assert!(tagged.refs.contains("v1"));
+        let edges =
+            sqlx::query_scalar!("SELECT COUNT(*) FROM edge WHERE view_id = ?", ViewInfo::ALL)
+                .fetch_one(&pool)
                 .await
                 .unwrap();
-            assert_eq!(masked.total, 1);
-            let masked_rows = sqlx::query!(
-                "SELECT hash FROM node WHERE view_id = ? ORDER BY row",
-                masked.id
-            )
-            .fetch_all(&pool)
+        assert_eq!(edges, 5);
+
+        // a mask holds only the commits made on the picked lines
+        let masked = materialize_mask(&pool, &[format!("merged-{topic}")], 1)
             .await
             .unwrap();
-            assert_eq!(masked_rows.len(), 1);
-            assert_eq!(masked_rows[0].hash, topic.to_string());
+        assert_eq!(masked.total, 1);
+        let masked_rows = sqlx::query!(
+            "SELECT hash FROM node WHERE view_id = ? ORDER BY row",
+            masked.id
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(masked_rows.len(), 1);
+        assert_eq!(masked_rows[0].hash, topic.to_string());
 
-            let change = |added, removed| FileChange {
-                path: "file.txt".into(),
-                added,
-                removed,
-            };
-            assert_eq!(files(&dir, &root.to_string()).unwrap(), [change(1, 0)]);
-            assert_eq!(files(&dir, &feature.to_string()).unwrap(), [change(1, 3)]);
-            assert!(files(&dir, &merge.to_string()).unwrap().is_empty());
-            std::fs::remove_dir_all(dir).unwrap();
-        });
+        let change = |added, removed| FileChange {
+            path: "file.txt".into(),
+            added,
+            removed,
+        };
+        assert_eq!(files(&dir, &root.to_string()).unwrap(), [change(1, 0)]);
+        assert_eq!(files(&dir, &feature.to_string()).unwrap(), [change(1, 3)]);
+        assert!(files(&dir, &merge.to_string()).unwrap().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn a_commit_a_deleted_branch_left_behind_leaves_the_view() {
-        tauri::async_runtime::block_on(async {
-            let dir = scratch("deleted");
-            let repo = init(&dir);
-            let root = commit(&repo, "main", "root", "a\n", &[]);
-            let gone = commit(&repo, "gone", "gone work", "b\n", &[root]);
-            let pool = cache_pool(&dir, &[root, gone]).await;
-            assert_eq!(
-                materialize(&pool, &refs(&dir).unwrap(), 1)
-                    .await
-                    .unwrap()
-                    .total,
-                2
-            );
-
-            repo.find_branch("gone", BranchType::Local)
+    #[tokio::test]
+    async fn a_commit_a_deleted_branch_left_behind_leaves_the_view() {
+        let dir = scratch("deleted");
+        let repo = init(&dir);
+        let root = commit(&repo, "main", "root", "a\n", &[]);
+        let gone = commit(&repo, "gone", "gone work", "b\n", &[root]);
+        let pool = cache_pool(&dir, &[root, gone]).await;
+        assert_eq!(
+            materialize(&pool, &refs(&dir).unwrap(), 1)
+                .await
                 .unwrap()
-                .delete()
-                .unwrap();
+                .total,
+            2
+        );
 
-            assert_eq!(
-                materialize(&pool, &refs(&dir).unwrap(), 2)
-                    .await
-                    .unwrap()
-                    .total,
-                1
-            );
-            assert_eq!(rows(&pool).await[0].0, root.to_string());
-            std::fs::remove_dir_all(dir).unwrap();
-        });
+        repo.find_branch("gone", BranchType::Local)
+            .unwrap()
+            .delete()
+            .unwrap();
+
+        assert_eq!(
+            materialize(&pool, &refs(&dir).unwrap(), 2)
+                .await
+                .unwrap()
+                .total,
+            1
+        );
+        assert_eq!(rows(&pool).await[0].0, root.to_string());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn reading_the_graph_in_pages_keeps_every_commit_once() {
+    #[tokio::test]
+    async fn reading_the_graph_in_pages_keeps_every_commit_once() {
         use std::collections::HashSet;
-        tauri::async_runtime::block_on(async {
-            let pool = Pool::<Sqlite>::connect("sqlite::memory:").await.unwrap();
-            cache::prepare(&pool).await.unwrap();
-            // all at the same second, so a page boundary lands inside one group
-            let facts: Vec<cache::Fact> = (1u8..=7)
-                .map(|i| cache::Fact {
-                    hash: Oid::from_bytes(&[i; 20]).unwrap().to_string(),
-                    time: 100,
-                    parents: Vec::new(),
-                    subject: format!("commit {i}"),
-                    author: "Vogt".into(),
-                    body: None,
-                })
-                .collect();
-            cache::enqueue(&pool, &facts).await.unwrap();
+        let pool = Pool::<Sqlite>::connect("sqlite::memory:").await.unwrap();
+        cache::prepare(&pool).await.unwrap();
+        // all at the same second, so a page boundary lands inside one group
+        let facts: Vec<cache::Fact> = (1u8..=7)
+            .map(|i| cache::Fact {
+                hash: Oid::from_bytes(&[i; 20]).unwrap().to_string(),
+                time: 100,
+                parents: Vec::new(),
+                subject: format!("commit {i}"),
+                author: "Vogt".into(),
+                body: None,
+            })
+            .collect();
+        cache::enqueue(&pool, &facts).await.unwrap();
 
-            let (oids, nodes, _) = read_graph(&pool, 2).await.unwrap();
+        let (oids, nodes, _) = read_graph(&pool, 2).await.unwrap();
 
-            assert_eq!(oids.len(), 7);
-            assert_eq!(nodes.len(), 7);
-            let unique: HashSet<Oid> = oids.iter().copied().collect();
-            assert_eq!(unique.len(), 7);
-        });
+        assert_eq!(oids.len(), 7);
+        assert_eq!(nodes.len(), 7);
+        let unique: HashSet<Oid> = oids.iter().copied().collect();
+        assert_eq!(unique.len(), 7);
     }
 
     #[test]
@@ -1240,69 +1232,63 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn laying_the_history_out_again_drops_the_masks() {
-        tauri::async_runtime::block_on(async {
-            let dir = scratch("masks");
-            let repo = init(&dir);
-            let root = commit(&repo, "main", "root", "a\n", &[]);
-            let pool = cache_pool(&dir, &[root]).await;
-            let refs = refs(&dir).unwrap();
-            materialize(&pool, &refs, 1).await.unwrap();
+    #[tokio::test]
+    async fn laying_the_history_out_again_drops_the_masks() {
+        let dir = scratch("masks");
+        let repo = init(&dir);
+        let root = commit(&repo, "main", "root", "a\n", &[]);
+        let pool = cache_pool(&dir, &[root]).await;
+        let refs = refs(&dir).unwrap();
+        materialize(&pool, &refs, 1).await.unwrap();
 
-            let masked = materialize_mask(&pool, &["main".into()], 1).await.unwrap();
-            assert!(masked.id.starts_with("mask:"));
+        let masked = materialize_mask(&pool, &["main".into()], 1).await.unwrap();
+        assert!(masked.id.starts_with("mask:"));
 
-            // the next unmasked layout drops every mask; one that is asked for
-            // again is built from the fresh view
-            materialize(&pool, &refs, 2).await.unwrap();
-            let views = sqlx::query_scalar!("SELECT COUNT(*) FROM views WHERE id LIKE 'mask:%'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-            let nodes =
-                sqlx::query_scalar!("SELECT COUNT(*) FROM node WHERE view_id LIKE 'mask:%'")
-                    .fetch_one(&pool)
-                    .await
-                    .unwrap();
-            let edges =
-                sqlx::query_scalar!("SELECT COUNT(*) FROM edge WHERE view_id LIKE 'mask:%'")
-                    .fetch_one(&pool)
-                    .await
-                    .unwrap();
-            assert_eq!((views, nodes, edges), (0, 0, 0), "a mask is left over");
-            std::fs::remove_dir_all(dir).unwrap();
-        });
-    }
-
-    #[test]
-    fn a_mask_lays_out_rows_whose_line_the_list_does_not_hold() {
-        tauri::async_runtime::block_on(async {
-            let dir = scratch("unknown-line");
-            let repo = init(&dir);
-            let root = commit(&repo, "main", "root", "a\n", &[]);
-            let next = commit(&repo, "main", "next", "b\n", &[root]);
-            let pool = cache_pool(&dir, &[root, next]).await;
-            materialize(&pool, &refs(&dir).unwrap(), 1).await.unwrap();
-            // the rows are written together with their line list; a cache that
-            // lost the list must not take the layout down with it
-            cache::set_meta(&pool, &[("lines", "[]".into())])
-                .await
-                .unwrap();
-
-            let masked = materialize_mask(&pool, &["main".into()], 1).await.unwrap();
-
-            assert_eq!(masked.total, 2);
-            let lines = sqlx::query_scalar!(
-                "SELECT DISTINCT line FROM edge WHERE view_id = ?",
-                masked.id
-            )
-            .fetch_all(&pool)
+        // the next unmasked layout drops every mask; one that is asked for
+        // again is built from the fresh view
+        materialize(&pool, &refs, 2).await.unwrap();
+        let views = sqlx::query_scalar!("SELECT COUNT(*) FROM views WHERE id LIKE 'mask:%'")
+            .fetch_one(&pool)
             .await
             .unwrap();
-            assert_eq!(lines, ["main"]);
-            std::fs::remove_dir_all(dir).unwrap();
-        });
+        let nodes = sqlx::query_scalar!("SELECT COUNT(*) FROM node WHERE view_id LIKE 'mask:%'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let edges = sqlx::query_scalar!("SELECT COUNT(*) FROM edge WHERE view_id LIKE 'mask:%'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!((views, nodes, edges), (0, 0, 0), "a mask is left over");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_mask_lays_out_rows_whose_line_the_list_does_not_hold() {
+        let dir = scratch("unknown-line");
+        let repo = init(&dir);
+        let root = commit(&repo, "main", "root", "a\n", &[]);
+        let next = commit(&repo, "main", "next", "b\n", &[root]);
+        let pool = cache_pool(&dir, &[root, next]).await;
+        materialize(&pool, &refs(&dir).unwrap(), 1).await.unwrap();
+        // the rows are written together with their line list; a cache that
+        // lost the list must not take the layout down with it
+        cache::set_meta(&pool, &[("lines", "[]".into())])
+            .await
+            .unwrap();
+
+        let masked = materialize_mask(&pool, &["main".into()], 1).await.unwrap();
+
+        assert_eq!(masked.total, 2);
+        let lines = sqlx::query_scalar!(
+            "SELECT DISTINCT line FROM edge WHERE view_id = ?",
+            masked.id
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(lines, ["main"]);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

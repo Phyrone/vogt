@@ -270,27 +270,25 @@ mod tests {
         .unwrap();
     }
 
-    #[test]
+    #[tokio::test]
     // inspects a scratch file with SQL no schema the query macros know describes
     #[allow(clippy::disallowed_methods)]
-    fn a_file_in_another_mode_is_rebuilt_as_incremental() {
-        tauri::async_runtime::block_on(async {
-            let (dir, pool) = file("convert").await;
-            fill(&pool, 10).await;
-            assert_eq!(space(&pool).await.unwrap().mode, 0);
+    async fn a_file_in_another_mode_is_rebuilt_as_incremental() {
+        let (dir, pool) = file("convert").await;
+        fill(&pool, 10).await;
+        assert_eq!(space(&pool).await.unwrap().mode, 0);
 
-            tend(&pool, Pass::Running).await.unwrap();
+        tend(&pool, Pass::Running).await.unwrap();
 
-            assert_eq!(space(&pool).await.unwrap().mode, INCREMENTAL);
-            let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blobs")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-            assert_eq!(kept, 10);
+        assert_eq!(space(&pool).await.unwrap().mode, INCREMENTAL);
+        let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blobs")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(kept, 10);
 
-            close(&pool).await;
-            let _ = std::fs::remove_dir_all(dir);
-        });
+        close(&pool).await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -303,235 +301,219 @@ mod tests {
         assert_eq!(due_in(Some(EVERY + minute)), Duration::ZERO);
     }
 
-    #[test]
-    fn closing_right_after_a_query_leaves_no_log_behind() {
-        tauri::async_runtime::block_on(async {
-            // the connection of the last query is still on its way back to the
-            // pool here, which is the moment a plain close gets wrong
-            for round in 0..20 {
-                let (dir, pool) = file(&format!("close-{round}")).await;
-                fill(&pool, 10).await;
-                tend(&pool, Pass::Exit).await.unwrap();
-
-                close(&pool).await;
-
-                assert_eq!(pool.size(), 0);
-                let left: Vec<_> = std::fs::read_dir(&dir)
-                    .unwrap()
-                    .map(|entry| entry.unwrap().file_name())
-                    .collect();
-                assert_eq!(left, ["test.db"], "round {round}");
-                let _ = std::fs::remove_dir_all(dir);
-            }
-        });
-    }
-
-    #[test]
-    fn closing_does_not_wait_for_a_connection_that_stays_out() {
-        tauri::async_runtime::block_on(async {
-            let (dir, pool) = file("held").await;
-            fill(&pool, 1).await;
-            // a command in a long query keeps its connection
-            let held = pool.acquire().await.unwrap();
-
-            let started = std::time::Instant::now();
-            close(&pool).await;
-
-            assert!(started.elapsed() < CLOSING * 3);
-            assert!(pool.is_closed());
-            // the held connection closes on its own task once it is let go,
-            // which may be after this; Windows refuses to delete the file
-            // while it is still open
-            drop(held);
-            let _ = std::fs::remove_dir_all(dir);
-        });
-    }
-
-    #[test]
-    // inspects a scratch file with SQL no schema the query macros know describes
-    #[allow(clippy::disallowed_methods)]
-    fn a_large_file_waits_for_the_exit_to_be_rebuilt() {
-        tauri::async_runtime::block_on(async {
-            let (dir, pool) = file("large").await;
-            fill(&pool, 100).await;
-            let before = space(&pool).await.unwrap();
-            assert!(before.pages > REBUILD);
-
-            // a rebuild would keep every other writer out for its whole length
-            tend(&pool, Pass::Running).await.unwrap();
-            assert_eq!(space(&pool).await.unwrap().mode, 0);
-
-            tend(&pool, Pass::Exit).await.unwrap();
-            assert_eq!(space(&pool).await.unwrap().mode, INCREMENTAL);
-            let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blobs")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-            assert_eq!(kept, 100);
-
-            close(&pool).await;
-            let _ = std::fs::remove_dir_all(dir);
-        });
-    }
-
-    #[test]
-    fn the_app_database_gets_its_exit_pass_where_the_plugin_keeps_it() {
-        use tauri::utils::config::{AppDirectoriesOverride, AppDirectoryOverrides};
-        tauri::async_runtime::block_on(async {
-            let (dir, pool) = file("app").await;
-            fill(&pool, 100).await;
-            close(&pool).await;
-            let mut context = tauri::test::mock_context(tauri::test::noop_assets());
-            context.config_mut().app.app_directories_override =
-                Some(AppDirectoriesOverride::Directories(AppDirectoryOverrides {
-                    config: Some(dir.clone()),
-                    ..Default::default()
-                }));
-            let app = tauri::test::mock_builder().build(context).unwrap();
-
-            on_exit(app.handle(), "sqlite:test.db").await.unwrap();
-            // a database the frontend never opened is nothing to fail over
-            on_exit(app.handle(), "sqlite:missing.db").await.unwrap();
-            assert!(!dir.join("missing.db").exists());
-
-            let pool = SqlitePoolOptions::new()
-                .connect_with(SqliteConnectOptions::new().filename(dir.join("test.db")))
-                .await
-                .unwrap();
-            assert_eq!(space(&pool).await.unwrap().mode, INCREMENTAL);
-
-            close(&pool).await;
-            let _ = std::fs::remove_dir_all(dir);
-        });
-    }
-
-    #[test]
-    fn a_rebuild_through_another_connection_is_seen() {
-        tauri::async_runtime::block_on(async {
-            let (dir, pool) = file("seen").await;
+    #[tokio::test]
+    async fn closing_right_after_a_query_leaves_no_log_behind() {
+        // the connection of the last query is still on its way back to the
+        // pool here, which is the moment a plain close gets wrong
+        for round in 0..20 {
+            let (dir, pool) = file(&format!("close-{round}")).await;
             fill(&pool, 10).await;
-            // a second pool on the file, as the frontend has on a cache; it
-            // has seen the file in its old mode
-            let other = SqlitePoolOptions::new()
-                .connect_with(SqliteConnectOptions::new().filename(dir.join("test.db")))
-                .await
-                .unwrap();
-            assert_eq!(space(&other).await.unwrap().mode, 0);
-
-            incremental(&pool).await.unwrap();
-
-            assert_eq!(space(&other).await.unwrap().mode, INCREMENTAL);
-
-            close(&other).await;
-            close(&pool).await;
-            let _ = std::fs::remove_dir_all(dir);
-        });
-    }
-
-    #[test]
-    // inspects a scratch file with SQL no schema the query macros know describes
-    #[allow(clippy::disallowed_methods)]
-    fn free_pages_are_handed_back_once_they_are_worth_it() {
-        tauri::async_runtime::block_on(async {
-            let (dir, pool) = file("release").await;
-            incremental(&pool).await.unwrap();
-            fill(&pool, 200).await;
-            // the statistics take their own pages; have them before counting
-            tend(&pool, Pass::Running).await.unwrap();
-            let full = space(&pool).await.unwrap();
-            assert_eq!(full.free, 0);
-
-            // a few free pages stay where the next write finds them
-            sqlx::raw_sql("DELETE FROM blobs WHERE id <= 10")
-                .execute(&pool)
-                .await
-                .unwrap();
-            let few = space(&pool).await.unwrap().free;
-            assert!(few > 0);
-            tend(&pool, Pass::Running).await.unwrap();
-            let kept = space(&pool).await.unwrap();
-            assert_eq!((kept.pages, kept.free), (full.pages, few));
-
-            // most of the file being free is worth truncating it
-            sqlx::raw_sql("DELETE FROM blobs WHERE id <= 150")
-                .execute(&pool)
-                .await
-                .unwrap();
-            tend(&pool, Pass::Running).await.unwrap();
-            let released = space(&pool).await.unwrap();
-            assert_eq!(released.free, 0);
-            assert!(released.pages < full.pages / 2);
-
-            // on the way out even a few are handed back
-            sqlx::raw_sql("DELETE FROM blobs WHERE id <= 155")
-                .execute(&pool)
-                .await
-                .unwrap();
-            let few = space(&pool).await.unwrap();
-            assert!(few.free > 0 && few.free * SLACK < few.pages);
             tend(&pool, Pass::Exit).await.unwrap();
-            let left = space(&pool).await.unwrap();
-            assert_eq!(left.free, 0);
-            assert!(left.pages < few.pages);
 
             close(&pool).await;
+
+            assert_eq!(pool.size(), 0);
+            let left: Vec<_> = std::fs::read_dir(&dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+            assert_eq!(left, ["test.db"], "round {round}");
             let _ = std::fs::remove_dir_all(dir);
-        });
+        }
     }
 
-    #[test]
-    // inspects a scratch file with SQL no schema the query macros know describes
-    #[allow(clippy::disallowed_methods)]
-    fn the_write_ahead_log_is_cut() {
-        tauri::async_runtime::block_on(async {
-            let (dir, pool) = file("log").await;
-            incremental(&pool).await.unwrap();
-            fill(&pool, 50).await;
-            let log = dir.join("test.db-wal");
-            assert!(std::fs::metadata(&log).unwrap().len() > 0);
+    #[tokio::test]
+    async fn closing_does_not_wait_for_a_connection_that_stays_out() {
+        let (dir, pool) = file("held").await;
+        fill(&pool, 1).await;
+        // a command in a long query keeps its connection
+        let held = pool.acquire().await.unwrap();
 
-            tend(&pool, Pass::Running).await.unwrap();
+        let started = std::time::Instant::now();
+        close(&pool).await;
 
-            assert_eq!(std::fs::metadata(&log).unwrap().len(), 0);
-            let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blobs")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-            assert_eq!(kept, 50);
-
-            close(&pool).await;
-            let _ = std::fs::remove_dir_all(dir);
-        });
+        assert!(started.elapsed() < CLOSING * 3);
+        assert!(pool.is_closed());
+        // the held connection closes on its own task once it is let go,
+        // which may be after this; Windows refuses to delete the file
+        // while it is still open
+        drop(held);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
-    #[test]
+    #[tokio::test]
     // inspects a scratch file with SQL no schema the query macros know describes
     #[allow(clippy::disallowed_methods)]
-    fn the_planner_gets_statistics() {
-        tauri::async_runtime::block_on(async {
-            let (dir, pool) = file("analyze").await;
-            sqlx::raw_sql(
-                "CREATE TABLE lines (id INTEGER PRIMARY KEY, line TEXT NOT NULL);
-                 CREATE INDEX lines_line ON lines (line);
-                 WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 500)
-                 INSERT INTO lines (line) SELECT 'line ' || (i % 7) FROM n;",
-            )
+    async fn a_large_file_waits_for_the_exit_to_be_rebuilt() {
+        let (dir, pool) = file("large").await;
+        fill(&pool, 100).await;
+        let before = space(&pool).await.unwrap();
+        assert!(before.pages > REBUILD);
+
+        // a rebuild would keep every other writer out for its whole length
+        tend(&pool, Pass::Running).await.unwrap();
+        assert_eq!(space(&pool).await.unwrap().mode, 0);
+
+        tend(&pool, Pass::Exit).await.unwrap();
+        assert_eq!(space(&pool).await.unwrap().mode, INCREMENTAL);
+        let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blobs")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(kept, 100);
+
+        close(&pool).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn the_app_database_gets_its_exit_pass_where_the_plugin_keeps_it() {
+        use tauri::utils::config::{AppDirectoriesOverride, AppDirectoryOverrides};
+        let (dir, pool) = file("app").await;
+        fill(&pool, 100).await;
+        close(&pool).await;
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context.config_mut().app.app_directories_override =
+            Some(AppDirectoriesOverride::Directories(AppDirectoryOverrides {
+                config: Some(dir.clone()),
+                ..Default::default()
+            }));
+        let app = tauri::test::mock_builder().build(context).unwrap();
+
+        on_exit(app.handle(), "sqlite:test.db").await.unwrap();
+        // a database the frontend never opened is nothing to fail over
+        on_exit(app.handle(), "sqlite:missing.db").await.unwrap();
+        assert!(!dir.join("missing.db").exists());
+
+        let pool = SqlitePoolOptions::new()
+            .connect_with(SqliteConnectOptions::new().filename(dir.join("test.db")))
+            .await
+            .unwrap();
+        assert_eq!(space(&pool).await.unwrap().mode, INCREMENTAL);
+
+        close(&pool).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn a_rebuild_through_another_connection_is_seen() {
+        let (dir, pool) = file("seen").await;
+        fill(&pool, 10).await;
+        // a second pool on the file, as the frontend has on a cache; it
+        // has seen the file in its old mode
+        let other = SqlitePoolOptions::new()
+            .connect_with(SqliteConnectOptions::new().filename(dir.join("test.db")))
+            .await
+            .unwrap();
+        assert_eq!(space(&other).await.unwrap().mode, 0);
+
+        incremental(&pool).await.unwrap();
+
+        assert_eq!(space(&other).await.unwrap().mode, INCREMENTAL);
+
+        close(&other).await;
+        close(&pool).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    // inspects a scratch file with SQL no schema the query macros know describes
+    #[allow(clippy::disallowed_methods)]
+    async fn free_pages_are_handed_back_once_they_are_worth_it() {
+        let (dir, pool) = file("release").await;
+        incremental(&pool).await.unwrap();
+        fill(&pool, 200).await;
+        // the statistics take their own pages; have them before counting
+        tend(&pool, Pass::Running).await.unwrap();
+        let full = space(&pool).await.unwrap();
+        assert_eq!(full.free, 0);
+
+        // a few free pages stay where the next write finds them
+        sqlx::raw_sql("DELETE FROM blobs WHERE id <= 10")
             .execute(&pool)
             .await
             .unwrap();
+        let few = space(&pool).await.unwrap().free;
+        assert!(few > 0);
+        tend(&pool, Pass::Running).await.unwrap();
+        let kept = space(&pool).await.unwrap();
+        assert_eq!((kept.pages, kept.free), (full.pages, few));
 
-            tend(&pool, Pass::Running).await.unwrap();
+        // most of the file being free is worth truncating it
+        sqlx::raw_sql("DELETE FROM blobs WHERE id <= 150")
+            .execute(&pool)
+            .await
+            .unwrap();
+        tend(&pool, Pass::Running).await.unwrap();
+        let released = space(&pool).await.unwrap();
+        assert_eq!(released.free, 0);
+        assert!(released.pages < full.pages / 2);
 
-            let stat: String =
-                sqlx::query_scalar("SELECT stat FROM sqlite_stat1 WHERE idx = 'lines_line'")
-                    .fetch_one(&pool)
-                    .await
-                    .unwrap();
-            // 500 rows, about 71 for each of the seven lines
-            assert!(stat.starts_with("500 "), "{stat}");
+        // on the way out even a few are handed back
+        sqlx::raw_sql("DELETE FROM blobs WHERE id <= 155")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let few = space(&pool).await.unwrap();
+        assert!(few.free > 0 && few.free * SLACK < few.pages);
+        tend(&pool, Pass::Exit).await.unwrap();
+        let left = space(&pool).await.unwrap();
+        assert_eq!(left.free, 0);
+        assert!(left.pages < few.pages);
 
-            close(&pool).await;
-            let _ = std::fs::remove_dir_all(dir);
-        });
+        close(&pool).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    // inspects a scratch file with SQL no schema the query macros know describes
+    #[allow(clippy::disallowed_methods)]
+    async fn the_write_ahead_log_is_cut() {
+        let (dir, pool) = file("log").await;
+        incremental(&pool).await.unwrap();
+        fill(&pool, 50).await;
+        let log = dir.join("test.db-wal");
+        assert!(std::fs::metadata(&log).unwrap().len() > 0);
+
+        tend(&pool, Pass::Running).await.unwrap();
+
+        assert_eq!(std::fs::metadata(&log).unwrap().len(), 0);
+        let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blobs")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(kept, 50);
+
+        close(&pool).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    // inspects a scratch file with SQL no schema the query macros know describes
+    #[allow(clippy::disallowed_methods)]
+    async fn the_planner_gets_statistics() {
+        let (dir, pool) = file("analyze").await;
+        sqlx::raw_sql(
+            "CREATE TABLE lines (id INTEGER PRIMARY KEY, line TEXT NOT NULL);
+             CREATE INDEX lines_line ON lines (line);
+             WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 500)
+             INSERT INTO lines (line) SELECT 'line ' || (i % 7) FROM n;",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        tend(&pool, Pass::Running).await.unwrap();
+
+        let stat: String =
+            sqlx::query_scalar("SELECT stat FROM sqlite_stat1 WHERE idx = 'lines_line'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        // 500 rows, about 71 for each of the seven lines
+        assert!(stat.starts_with("500 "), "{stat}");
+
+        close(&pool).await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

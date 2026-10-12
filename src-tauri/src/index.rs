@@ -924,135 +924,129 @@ mod tests {
             .unwrap()
     }
 
-    #[test]
-    fn the_commands_sync_a_broken_path_and_forget_a_repository() {
-        tauri::async_runtime::block_on(async {
-            let (dir, _repo, _refs) = repository("commands", 3);
-            let root = scratch("commands-cache");
-            std::fs::create_dir_all(&root).unwrap();
-            let missing = root.join("not-a-repository");
-            let app = app_with_cache(&root);
+    #[tokio::test]
+    async fn the_commands_sync_a_broken_path_and_forget_a_repository() {
+        let (dir, _repo, _refs) = repository("commands", 3);
+        let root = scratch("commands-cache");
+        std::fs::create_dir_all(&root).unwrap();
+        let missing = root.join("not-a-repository");
+        let app = app_with_cache(&root);
 
-            let list = vec![
-                Registered {
-                    id: BROKEN.into(),
-                    workspace: WORKSPACE.into(),
-                    path: missing.clone(),
-                },
-                Registered {
-                    id: REAL.into(),
-                    workspace: WORKSPACE.into(),
-                    path: dir.clone(),
-                },
-            ];
-            // a broken entry must not stop the ones after it
-            sync_repositories(app.handle().clone(), app.state::<Repos>(), list)
-                .await
-                .unwrap();
-
-            // opening the broken one reports the folder, not what libgit2 said
-            let failure = crate::history::open_history(
-                app.handle().clone(),
-                app.state::<Repos>(),
-                WORKSPACE.into(),
-                BROKEN.into(),
-                missing,
-            )
-            .await
-            .unwrap_err();
-            assert_eq!(failure, "This folder is not a git repository.");
-
-            // the real one is watched, indexed and laid out
-            let repos = app.state::<Repos>();
-            let real = repos.get(REAL).expect("the real repository is watched");
-            let mut progress = cache::progress(&real.cache.pool).await.unwrap();
-            for _ in 0..200 {
-                // `complete` alone is set before the last layout runs
-                if (progress.indexed, progress.laid, progress.complete) == (3, 3, true) {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(25)).await;
-                progress = cache::progress(&real.cache.pool).await.unwrap();
-            }
-            assert_eq!(
-                (progress.indexed, progress.laid, progress.complete),
-                (3, 3, true)
-            );
-
-            // forgetting it takes its cache file and write-ahead siblings along
-            let file = real.cache.file.clone();
-            assert!(file.exists());
-            let removed = forget_repo(
-                app.handle().clone(),
-                app.state::<Repos>(),
-                WORKSPACE.into(),
-                REAL.into(),
-            )
+        let list = vec![
+            Registered {
+                id: BROKEN.into(),
+                workspace: WORKSPACE.into(),
+                path: missing.clone(),
+            },
+            Registered {
+                id: REAL.into(),
+                workspace: WORKSPACE.into(),
+                path: dir.clone(),
+            },
+        ];
+        // a broken entry must not stop the ones after it
+        sync_repositories(app.handle().clone(), app.state::<Repos>(), list)
             .await
             .unwrap();
-            assert_eq!(removed, file.to_string_lossy());
-            assert!(!file.exists());
-            assert!(!file.with_extension("db-wal").exists());
-            assert!(!file.with_extension("db-shm").exists());
 
-            std::fs::remove_dir_all(dir).unwrap();
-            let _ = std::fs::remove_dir_all(root);
-        });
+        // opening the broken one reports the folder, not what libgit2 said
+        let failure = crate::history::open_history(
+            app.handle().clone(),
+            app.state::<Repos>(),
+            WORKSPACE.into(),
+            BROKEN.into(),
+            missing,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(failure, "This folder is not a git repository.");
+
+        // the real one is watched, indexed and laid out
+        let repos = app.state::<Repos>();
+        let real = repos.get(REAL).expect("the real repository is watched");
+        let mut progress = cache::progress(&real.cache.pool).await.unwrap();
+        for _ in 0..200 {
+            // `complete` alone is set before the last layout runs
+            if (progress.indexed, progress.laid, progress.complete) == (3, 3, true) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            progress = cache::progress(&real.cache.pool).await.unwrap();
+        }
+        assert_eq!(
+            (progress.indexed, progress.laid, progress.complete),
+            (3, 3, true)
+        );
+
+        // forgetting it takes its cache file and write-ahead siblings along
+        let file = real.cache.file.clone();
+        assert!(file.exists());
+        let removed = forget_repo(
+            app.handle().clone(),
+            app.state::<Repos>(),
+            WORKSPACE.into(),
+            REAL.into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(removed, file.to_string_lossy());
+        assert!(!file.exists());
+        assert!(!file.with_extension("db-wal").exists());
+        assert!(!file.with_extension("db-shm").exists());
+
+        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(root);
     }
 
-    #[test]
-    fn two_commands_opening_a_new_cache_at_once_share_one_entry() {
-        tauri::async_runtime::block_on(async {
-            let (dir, _repo, _refs) = repository("together", 3);
-            let root = scratch("together-cache");
-            let app = app_with_cache(&root);
-            let open = || {
-                let app = app.handle().clone();
-                let dir = dir.clone();
-                tauri::async_runtime::spawn(async move {
-                    ensure(&app, &app.state::<Repos>(), WORKSPACE, REAL, &dir)
-                        .await
-                        .unwrap()
-                })
-            };
-            let (first, second) = (open(), open());
-            let (first, second) = (first.await.unwrap(), second.await.unwrap());
-            assert!(Arc::ptr_eq(&first, &second));
-
-            // the one cache they share is built once and indexed in full
-            let progress = indexed(&app.state::<Repos>(), REAL, 3).await;
-            assert_eq!(
-                (progress.indexed, progress.laid, progress.complete),
-                (3, 3, true)
-            );
-
-            shutdown(&app.state::<Repos>()).await;
-            std::fs::remove_dir_all(dir).unwrap();
-            let _ = std::fs::remove_dir_all(root);
-        });
-    }
-
-    #[test]
-    fn nothing_is_opened_after_the_shutdown() {
-        tauri::async_runtime::block_on(async {
-            let (dir, _repo, _refs) = repository("closed", 1);
-            let root = scratch("closed-cache");
-            let app = app_with_cache(&root);
-            let repos = app.state::<Repos>();
-            shutdown(&repos).await;
-
-            // as a command that waited for the lock while the exit drained it
-            assert!(
-                ensure(app.handle(), &repos, WORKSPACE, REAL, &dir)
+    #[tokio::test]
+    async fn two_commands_opening_a_new_cache_at_once_share_one_entry() {
+        let (dir, _repo, _refs) = repository("together", 3);
+        let root = scratch("together-cache");
+        let app = app_with_cache(&root);
+        let open = || {
+            let app = app.handle().clone();
+            let dir = dir.clone();
+            tauri::async_runtime::spawn(async move {
+                ensure(&app, &app.state::<Repos>(), WORKSPACE, REAL, &dir)
                     .await
-                    .is_err()
-            );
-            assert!(repos.get(REAL).is_none());
-            assert!(!cache::file(app.handle(), WORKSPACE, REAL).unwrap().exists());
+                    .unwrap()
+            })
+        };
+        let (first, second) = (open(), open());
+        let (first, second) = (first.await.unwrap(), second.await.unwrap());
+        assert!(Arc::ptr_eq(&first, &second));
 
-            std::fs::remove_dir_all(dir).unwrap();
-            let _ = std::fs::remove_dir_all(root);
-        });
+        // the one cache they share is built once and indexed in full
+        let progress = indexed(&app.state::<Repos>(), REAL, 3).await;
+        assert_eq!(
+            (progress.indexed, progress.laid, progress.complete),
+            (3, 3, true)
+        );
+
+        shutdown(&app.state::<Repos>()).await;
+        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn nothing_is_opened_after_the_shutdown() {
+        let (dir, _repo, _refs) = repository("closed", 1);
+        let root = scratch("closed-cache");
+        let app = app_with_cache(&root);
+        let repos = app.state::<Repos>();
+        shutdown(&repos).await;
+
+        // as a command that waited for the lock while the exit drained it
+        assert!(
+            ensure(app.handle(), &repos, WORKSPACE, REAL, &dir)
+                .await
+                .is_err()
+        );
+        assert!(repos.get(REAL).is_none());
+        assert!(!cache::file(app.handle(), WORKSPACE, REAL).unwrap().exists());
+
+        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// Waits until the worker of `repo` has indexed and laid out `commits`.
@@ -1069,610 +1063,584 @@ mod tests {
         progress
     }
 
-    #[test]
-    fn rebuilding_the_caches_empties_them_and_indexes_them_again() {
-        tauri::async_runtime::block_on(async {
-            let (dir, _repo, _refs) = repository("rebuild", 3);
-            let root = scratch("rebuild-cache");
-            let app = app_with_cache(&root);
-            let list = vec![Registered {
-                id: REAL.into(),
-                workspace: WORKSPACE.into(),
-                path: dir.clone(),
-            }];
-            sync_repositories(app.handle().clone(), app.state::<Repos>(), list)
-                .await
-                .unwrap();
-            let repos = app.state::<Repos>();
-            let before = indexed(&repos, REAL, 3).await;
-            assert_eq!((before.indexed, before.laid, before.complete), (3, 3, true));
-            let old = repos.get(REAL).unwrap();
-            let version = |pool| async move {
-                cache::meta(pool, "version")
-                    .await
-                    .unwrap()
-                    .and_then(|value| value.parse::<i64>().ok())
-                    .unwrap_or(0)
-            };
-            let before = version(&old.cache.pool).await;
-            assert!(before > 0);
-            // a key no walk writes, so only the emptying takes it away
-            cache::set_meta(&old.cache.pool, &[("marker", "1".into())])
-                .await
-                .unwrap();
-
-            rebuild_caches(app.handle().clone(), app.state::<Repos>())
-                .await
-                .unwrap();
-
-            // a new entry on the same file, which the indexer builds again; a
-            // slow runner may leave the old worker in a sync past the wait, and
-            // the rebuild then comes once it is through
-            for _ in 0..400 {
-                if !Arc::ptr_eq(&repos.get(REAL).unwrap(), &old) {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(25)).await;
-            }
-            let new = repos.get(REAL).expect("the repository is watched again");
-            assert!(!Arc::ptr_eq(&old, &new));
-            assert_eq!(new.cache.file, old.cache.file);
-            let after = indexed(&repos, REAL, 3).await;
-            assert_eq!((after.indexed, after.laid, after.complete), (3, 3, true));
-            // from an emptied file, whose rounds counted on from the version
-            // it had rather than from zero
-            assert_eq!(cache::meta(&new.cache.pool, "marker").await.unwrap(), None);
-            assert!(version(&new.cache.pool).await > before);
-
-            shutdown(&repos).await;
-            std::fs::remove_dir_all(dir).unwrap();
-            let _ = std::fs::remove_dir_all(root);
-        });
-    }
-
-    #[test]
-    fn a_rebuild_leaves_a_busy_worker_to_finish_and_rebuilds_its_cache_after() {
-        tauri::async_runtime::block_on(async {
-            let (dir, _repo, _refs) = repository("busy-rebuild", 3);
-            let root = scratch("busy-rebuild-cache");
-            let app = app_with_cache(&root);
-            let repos = app.state::<Repos>();
-            // an entry whose worker is in a batch that outlasts the wait: it
-            // has none, so it is gone only once the test says so
-            let cache = cache::open(app.handle(), WORKSPACE, REAL).await.unwrap();
-            let busy = Arc::new(Repo::new(REAL.into(), dir.clone(), cache));
-            repos.open.lock().unwrap().insert(REAL.into(), busy.clone());
-            cache::set_meta(&busy.cache.pool, &[("marker", "1".into())])
-                .await
-                .unwrap();
-
-            // the rebuild gives up on the worker, and the entry stays where
-            // the commands find it, with its cache as it was
-            let rebuilt = tokio::time::timeout(
-                SHUTDOWN * 3,
-                rebuild_caches(app.handle().clone(), app.state::<Repos>()),
-            )
+    #[tokio::test]
+    async fn rebuilding_the_caches_empties_them_and_indexes_them_again() {
+        let (dir, _repo, _refs) = repository("rebuild", 3);
+        let root = scratch("rebuild-cache");
+        let app = app_with_cache(&root);
+        let list = vec![Registered {
+            id: REAL.into(),
+            workspace: WORKSPACE.into(),
+            path: dir.clone(),
+        }];
+        sync_repositories(app.handle().clone(), app.state::<Repos>(), list)
             .await
-            .expect("the rebuild waits for a worker a bounded time");
-            rebuilt.unwrap();
-            assert!(Arc::ptr_eq(&repos.get(REAL).unwrap(), &busy));
-            assert_eq!(
-                cache::meta(&busy.cache.pool, "marker").await.unwrap(),
-                Some("1".into())
-            );
-
-            // once the worker is through, the cache is emptied and a new entry
-            // takes the old one's place
-            busy.stopped.send_replace(true);
-            for _ in 0..200 {
-                if !Arc::ptr_eq(&repos.get(REAL).unwrap(), &busy) {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(25)).await;
-            }
-            let fresh = repos.get(REAL).unwrap();
-            assert!(!Arc::ptr_eq(&fresh, &busy));
-            let after = indexed(&repos, REAL, 3).await;
-            assert_eq!((after.indexed, after.laid, after.complete), (3, 3, true));
-            assert_eq!(
-                cache::meta(&fresh.cache.pool, "marker").await.unwrap(),
-                None
-            );
-
-            shutdown(&repos).await;
-            std::fs::remove_dir_all(dir).unwrap();
-            let _ = std::fs::remove_dir_all(root);
-        });
-    }
-
-    #[test]
-    fn forgetting_a_busy_repository_deletes_its_cache_once_the_worker_is_through() {
-        tauri::async_runtime::block_on(async {
-            let (dir, _repo, _refs) = repository("busy-forget", 3);
-            let root = scratch("busy-forget-cache");
-            let app = app_with_cache(&root);
-            let repos = app.state::<Repos>();
-            // an entry whose worker is in a batch that outlasts the wait, as in
-            // the busy rebuild
-            let cache = cache::open(app.handle(), WORKSPACE, REAL).await.unwrap();
-            let busy = Arc::new(Repo::new(REAL.into(), dir.clone(), cache));
-            repos.open.lock().unwrap().insert(REAL.into(), busy.clone());
-            let file = busy.cache.file.clone();
-
-            // the command gives up on the worker and lets go of the lock, so
-            // the other commands do not wait for the batch
-            let removed = tokio::time::timeout(
-                SHUTDOWN * 3,
-                forget_repo(
-                    app.handle().clone(),
-                    app.state::<Repos>(),
-                    WORKSPACE.into(),
-                    REAL.into(),
-                ),
-            )
-            .await
-            .expect("forgetting waits for a worker a bounded time")
             .unwrap();
-            assert_eq!(removed, file.to_string_lossy());
-            assert!(repos.get(REAL).is_none());
-            assert!(repos.opening.try_lock().is_ok());
-            assert!(file.exists());
+        let repos = app.state::<Repos>();
+        let before = indexed(&repos, REAL, 3).await;
+        assert_eq!((before.indexed, before.laid, before.complete), (3, 3, true));
+        let old = repos.get(REAL).unwrap();
+        let version = |pool| async move {
+            cache::meta(pool, "version")
+                .await
+                .unwrap()
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(0)
+        };
+        let before = version(&old.cache.pool).await;
+        assert!(before > 0);
+        // a key no walk writes, so only the emptying takes it away
+        cache::set_meta(&old.cache.pool, &[("marker", "1".into())])
+            .await
+            .unwrap();
 
-            // once the worker is through, its cache is closed and deleted
-            busy.stopped.send_replace(true);
-            for _ in 0..200 {
-                if !file.exists() {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(25)).await;
+        rebuild_caches(app.handle().clone(), app.state::<Repos>())
+            .await
+            .unwrap();
+
+        // a new entry on the same file, which the indexer builds again; a
+        // slow runner may leave the old worker in a sync past the wait, and
+        // the rebuild then comes once it is through
+        for _ in 0..400 {
+            if !Arc::ptr_eq(&repos.get(REAL).unwrap(), &old) {
+                break;
             }
-            assert!(busy.cache.pool.is_closed());
-            assert!(!file.exists());
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let new = repos.get(REAL).expect("the repository is watched again");
+        assert!(!Arc::ptr_eq(&old, &new));
+        assert_eq!(new.cache.file, old.cache.file);
+        let after = indexed(&repos, REAL, 3).await;
+        assert_eq!((after.indexed, after.laid, after.complete), (3, 3, true));
+        // from an emptied file, whose rounds counted on from the version
+        // it had rather than from zero
+        assert_eq!(cache::meta(&new.cache.pool, "marker").await.unwrap(), None);
+        assert!(version(&new.cache.pool).await > before);
 
-            let _ = std::fs::remove_dir_all(dir);
-            let _ = std::fs::remove_dir_all(root);
-        });
+        shutdown(&repos).await;
+        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(root);
     }
 
-    #[test]
+    #[tokio::test]
+    async fn a_rebuild_leaves_a_busy_worker_to_finish_and_rebuilds_its_cache_after() {
+        let (dir, _repo, _refs) = repository("busy-rebuild", 3);
+        let root = scratch("busy-rebuild-cache");
+        let app = app_with_cache(&root);
+        let repos = app.state::<Repos>();
+        // an entry whose worker is in a batch that outlasts the wait: it
+        // has none, so it is gone only once the test says so
+        let cache = cache::open(app.handle(), WORKSPACE, REAL).await.unwrap();
+        let busy = Arc::new(Repo::new(REAL.into(), dir.clone(), cache));
+        repos.open.lock().unwrap().insert(REAL.into(), busy.clone());
+        cache::set_meta(&busy.cache.pool, &[("marker", "1".into())])
+            .await
+            .unwrap();
+
+        // the rebuild gives up on the worker, and the entry stays where
+        // the commands find it, with its cache as it was
+        let rebuilt = tokio::time::timeout(
+            SHUTDOWN * 3,
+            rebuild_caches(app.handle().clone(), app.state::<Repos>()),
+        )
+        .await
+        .expect("the rebuild waits for a worker a bounded time");
+        rebuilt.unwrap();
+        assert!(Arc::ptr_eq(&repos.get(REAL).unwrap(), &busy));
+        assert_eq!(
+            cache::meta(&busy.cache.pool, "marker").await.unwrap(),
+            Some("1".into())
+        );
+
+        // once the worker is through, the cache is emptied and a new entry
+        // takes the old one's place
+        busy.stopped.send_replace(true);
+        for _ in 0..200 {
+            if !Arc::ptr_eq(&repos.get(REAL).unwrap(), &busy) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let fresh = repos.get(REAL).unwrap();
+        assert!(!Arc::ptr_eq(&fresh, &busy));
+        let after = indexed(&repos, REAL, 3).await;
+        assert_eq!((after.indexed, after.laid, after.complete), (3, 3, true));
+        assert_eq!(
+            cache::meta(&fresh.cache.pool, "marker").await.unwrap(),
+            None
+        );
+
+        shutdown(&repos).await;
+        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn forgetting_a_busy_repository_deletes_its_cache_once_the_worker_is_through() {
+        let (dir, _repo, _refs) = repository("busy-forget", 3);
+        let root = scratch("busy-forget-cache");
+        let app = app_with_cache(&root);
+        let repos = app.state::<Repos>();
+        // an entry whose worker is in a batch that outlasts the wait, as in
+        // the busy rebuild
+        let cache = cache::open(app.handle(), WORKSPACE, REAL).await.unwrap();
+        let busy = Arc::new(Repo::new(REAL.into(), dir.clone(), cache));
+        repos.open.lock().unwrap().insert(REAL.into(), busy.clone());
+        let file = busy.cache.file.clone();
+
+        // the command gives up on the worker and lets go of the lock, so
+        // the other commands do not wait for the batch
+        let removed = tokio::time::timeout(
+            SHUTDOWN * 3,
+            forget_repo(
+                app.handle().clone(),
+                app.state::<Repos>(),
+                WORKSPACE.into(),
+                REAL.into(),
+            ),
+        )
+        .await
+        .expect("forgetting waits for a worker a bounded time")
+        .unwrap();
+        assert_eq!(removed, file.to_string_lossy());
+        assert!(repos.get(REAL).is_none());
+        assert!(repos.opening.try_lock().is_ok());
+        assert!(file.exists());
+
+        // once the worker is through, its cache is closed and deleted
+        busy.stopped.send_replace(true);
+        for _ in 0..200 {
+            if !file.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(busy.cache.pool.is_closed());
+        assert!(!file.exists());
+
+        let _ = std::fs::remove_dir_all(dir);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
     // inspects the file with constant pragmas, which no schema describes
     #[allow(clippy::disallowed_methods)]
-    fn a_synced_cache_is_tended_and_shutting_down_tends_and_closes_it() {
-        tauri::async_runtime::block_on(async {
-            let (dir, _repo, _refs) = repository("shutdown", 3);
-            let root = scratch("shutdown-cache");
-            std::fs::create_dir_all(&root).unwrap();
-            let app = app_with_cache(&root);
-            let list = vec![Registered {
-                id: REAL.into(),
-                workspace: WORKSPACE.into(),
-                path: dir.clone(),
-            }];
-            sync_repositories(app.handle().clone(), app.state::<Repos>(), list)
-                .await
-                .unwrap();
-            let repos = app.state::<Repos>();
-            let real = repos.get(REAL).expect("the repository is watched");
-            let pool = &real.cache.pool;
+    async fn a_synced_cache_is_tended_and_shutting_down_tends_and_closes_it() {
+        let (dir, _repo, _refs) = repository("shutdown", 3);
+        let root = scratch("shutdown-cache");
+        std::fs::create_dir_all(&root).unwrap();
+        let app = app_with_cache(&root);
+        let list = vec![Registered {
+            id: REAL.into(),
+            workspace: WORKSPACE.into(),
+            path: dir.clone(),
+        }];
+        sync_repositories(app.handle().clone(), app.state::<Repos>(), list)
+            .await
+            .unwrap();
+        let repos = app.state::<Repos>();
+        let real = repos.get(REAL).expect("the repository is watched");
+        let pool = &real.cache.pool;
 
-            // a new cache file starts out in incremental auto-vacuum mode
-            let mode: i64 = sqlx::query_scalar("PRAGMA auto_vacuum")
-                .persistent(false)
-                .fetch_one(pool)
-                .await
-                .unwrap();
-            assert_eq!(mode, 2);
+        // a new cache file starts out in incremental auto-vacuum mode
+        let mode: i64 = sqlx::query_scalar("PRAGMA auto_vacuum")
+            .persistent(false)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(mode, 2);
 
-            // the worker tends it once the first sync is through, which is
-            // when the planner's statistics appear
-            let mut analyzed = false;
-            for _ in 0..200 {
-                analyzed = sqlx::query_scalar::<_, i64>(
-                    "SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = 'commits'",
-                )
-                .fetch_one(pool)
-                .await
-                .is_ok_and(|rows| rows > 0);
-                if analyzed {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(25)).await;
+        // the worker tends it once the first sync is through, which is
+        // when the planner's statistics appear
+        let mut analyzed = false;
+        for _ in 0..200 {
+            analyzed = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = 'commits'",
+            )
+            .fetch_one(pool)
+            .await
+            .is_ok_and(|rows| rows > 0);
+            if analyzed {
+                break;
             }
-            assert!(analyzed);
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(analyzed);
 
-            // a few free pages, which no running pass would bother with
-            sqlx::raw_sql(
-                "CREATE TABLE junk AS SELECT zeroblob(8000) AS data;
-                 DROP TABLE junk;",
-            )
-            .execute(pool)
+        // a few free pages, which no running pass would bother with
+        sqlx::raw_sql(
+            "CREATE TABLE junk AS SELECT zeroblob(8000) AS data;
+             DROP TABLE junk;",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+        let free: i64 = sqlx::query_scalar("PRAGMA freelist_count")
+            .fetch_one(pool)
             .await
             .unwrap();
-            let free: i64 = sqlx::query_scalar("PRAGMA freelist_count")
-                .fetch_one(pool)
-                .await
-                .unwrap();
-            assert!(free > 0);
-            let file = real.cache.file.clone();
-            assert!(file.with_extension("db-wal").exists());
+        assert!(free > 0);
+        let file = real.cache.file.clone();
+        assert!(file.with_extension("db-wal").exists());
 
-            shutdown(&repos).await;
+        shutdown(&repos).await;
 
-            // the last connection folded the log into the file and removed it
-            assert!(real.cache.pool.is_closed());
-            assert!(repos.get(REAL).is_none());
-            assert!(file.exists());
-            assert!(!file.with_extension("db-wal").exists());
-            assert!(!file.with_extension("db-shm").exists());
+        // the last connection folded the log into the file and removed it
+        assert!(real.cache.pool.is_closed());
+        assert!(repos.get(REAL).is_none());
+        assert!(file.exists());
+        assert!(!file.with_extension("db-wal").exists());
+        assert!(!file.with_extension("db-shm").exists());
 
-            // and the exit pass handed the free pages back first
-            let closed = sqlx::sqlite::SqlitePoolOptions::new()
-                .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&file))
-                .await
-                .unwrap();
-            let free: i64 = sqlx::query_scalar("PRAGMA freelist_count")
-                .fetch_one(&closed)
-                .await
-                .unwrap();
-            assert_eq!(free, 0);
-            maintenance::close(&closed).await;
-
-            std::fs::remove_dir_all(dir).unwrap();
-            let _ = std::fs::remove_dir_all(root);
-        });
-    }
-
-    #[test]
-    fn the_walk_reads_every_commit_and_lays_it_out() {
-        tauri::async_runtime::block_on(async {
-            let (dir, _repo, refs) = repository("full", 5);
-            let pool = pool().await;
-            let reports = AtomicUsize::new(0);
-
-            walk(
-                &pool,
-                &dir,
-                &refs,
-                2,
-                &|_, _, _, _| {
-                    reports.fetch_add(1, Ordering::SeqCst);
-                },
-                &|| false,
-            )
+        // and the exit pass handed the free pages back first
+        let closed = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&file))
             .await
             .unwrap();
-
-            let progress = cache::progress(&pool).await.unwrap();
-            assert_eq!(
-                (progress.indexed, progress.laid, progress.complete),
-                (5, 5, true)
-            );
-            assert!(reports.load(Ordering::SeqCst) >= 2);
-            let rows: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM node WHERE view_id = 'all'")
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-            assert_eq!(rows, 5);
-            std::fs::remove_dir_all(dir).unwrap();
-        });
-    }
-
-    #[test]
-    fn an_interrupted_walk_resumes_where_it_stopped() {
-        tauri::async_runtime::block_on(async {
-            let (dir, _repo, refs) = repository("resume", 6);
-            let pool = pool().await;
-            let calls = AtomicUsize::new(0);
-
-            walk(
-                &pool,
-                &dir,
-                &refs,
-                2,
-                &|_, _, _, _| {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                },
-                &|| calls.load(Ordering::SeqCst) > 0,
-            )
+        let free: i64 = sqlx::query_scalar("PRAGMA freelist_count")
+            .fetch_one(&closed)
             .await
             .unwrap();
+        assert_eq!(free, 0);
+        maintenance::close(&closed).await;
 
-            let stopped = cache::progress(&pool).await.unwrap();
-            assert!(!stopped.complete);
-            assert!(stopped.indexed > 0 && stopped.indexed < 6);
-            assert!(!cache::pending(&pool).await.unwrap().is_empty());
-
-            // starting again picks the work list up where it was left
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
-                .await
-                .unwrap();
-
-            let done = cache::progress(&pool).await.unwrap();
-            assert_eq!((done.indexed, done.laid, done.complete), (6, 6, true));
-            assert!(cache::pending(&pool).await.unwrap().is_empty());
-            std::fs::remove_dir_all(dir).unwrap();
-        });
+        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(root);
     }
 
-    #[test]
-    fn a_second_walk_only_reads_what_is_new() {
-        tauri::async_runtime::block_on(async {
-            let (dir, repo, refs) = repository("again", 4);
-            let pool = pool().await;
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
-                .await
-                .unwrap();
-            let version = cache::meta(&pool, "version").await.unwrap();
+    #[tokio::test]
+    async fn the_walk_reads_every_commit_and_lays_it_out() {
+        let (dir, _repo, refs) = repository("full", 5);
+        let pool = pool().await;
+        let reports = AtomicUsize::new(0);
 
-            // nothing changed: the walk does not even lay out again
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
-                .await
-                .unwrap();
-            assert_eq!(cache::meta(&pool, "version").await.unwrap(), version);
+        walk(
+            &pool,
+            &dir,
+            &refs,
+            2,
+            &|_, _, _, _| {
+                reports.fetch_add(1, Ordering::SeqCst);
+            },
+            &|| false,
+        )
+        .await
+        .unwrap();
 
-            // one more commit: it is read, and the view grows by one
-            let tip = refs.head.unwrap();
-            commit(&repo, "later", &[tip]);
-            let refs = history::refs(&dir).unwrap();
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
-                .await
-                .unwrap();
-
-            let progress = cache::progress(&pool).await.unwrap();
-            assert_eq!(
-                (progress.indexed, progress.laid, progress.complete),
-                (5, 5, true)
-            );
-            std::fs::remove_dir_all(dir).unwrap();
-        });
-    }
-
-    #[test]
-    fn a_walk_after_the_refs_moved_is_not_complete_until_it_is_through() {
-        tauri::async_runtime::block_on(async {
-            let (dir, repo, refs) = repository("rewalk", 3);
-            let pool = pool().await;
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
-                .await
-                .unwrap();
-            assert!(cache::progress(&pool).await.unwrap().complete);
-
-            // a new commit, and a walk that stops after its first report
-            commit(&repo, "later", &[refs.head.unwrap()]);
-            let refs = history::refs(&dir).unwrap();
-            let reports = Mutex::new(Vec::new());
-            walk(
-                &pool,
-                &dir,
-                &refs,
-                2,
-                &|_, _, _, complete| reports.lock().unwrap().push(complete),
-                &|| !reports.lock().unwrap().is_empty(),
-            )
-            .await
-            .unwrap();
-            assert_eq!(*reports.lock().unwrap(), [false]);
-            assert!(!cache::progress(&pool).await.unwrap().complete);
-
-            // the rest of the walk is what makes it whole again
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
-                .await
-                .unwrap();
-            let progress = cache::progress(&pool).await.unwrap();
-            assert_eq!(
-                (progress.indexed, progress.laid, progress.complete),
-                (4, 4, true)
-            );
-            std::fs::remove_dir_all(dir).unwrap();
-        });
-    }
-
-    #[test]
-    fn an_amended_tip_leaves_the_old_one_out_of_the_view() {
-        tauri::async_runtime::block_on(async {
-            let (dir, repo, _refs) = repository("amend", 3);
-            let root = scratch("amend-cache");
-            let app = app_with_cache(&root);
-            let cache = cache::open(app.handle(), WORKSPACE, REAL).await.unwrap();
-            let entry = Repo::new(REAL.into(), dir.clone(), cache);
-
-            sync(app.handle(), &entry).await.unwrap();
-            let old = repo.head().unwrap().target().unwrap();
-            // a head an earlier open had noted, as the cache's `heads` key did
-            cache::set_meta(
-                &entry.cache.pool,
-                &[("heads", serde_json::to_string(&[old.to_string()]).unwrap())],
-            )
-            .await
-            .unwrap();
-
-            // the tip is replaced by a sibling on the same parent
-            let parent = repo.find_commit(old).unwrap().parent(0).unwrap().id();
-            let new = detached_commit(&repo, "rewritten", &[parent]);
-            repo.reference("refs/heads/main", new, true, "rewritten")
-                .unwrap();
-            assert_ne!(old, new);
-
-            sync(app.handle(), &entry).await.unwrap();
-
-            let hashes: Vec<String> =
-                sqlx::query_scalar!("SELECT hash FROM node WHERE view_id = 'all'")
-                    .fetch_all(&entry.cache.pool)
-                    .await
-                    .unwrap();
-            assert!(hashes.contains(&new.to_string()));
-            assert!(!hashes.contains(&old.to_string()));
-
-            maintenance::close(&entry.cache.pool).await;
-            std::fs::remove_dir_all(dir).unwrap();
-            let _ = std::fs::remove_dir_all(root);
-        });
-    }
-
-    #[test]
-    fn the_detached_head_of_a_linked_worktree_is_walked() {
-        tauri::async_runtime::block_on(async {
-            let (dir, repo, _refs) = repository("worktree-head", 1);
-            let linked = dir.join("feature");
-            repo.worktree("feature", &linked, None).unwrap();
-
-            // a commit only the linked worktree's HEAD points at
-            let head = repo.head().unwrap().target().unwrap();
-            let orphan = detached_commit(&repo, "detached work", &[head]);
-            git2::Repository::open(&linked)
-                .unwrap()
-                .set_head_detached(orphan)
-                .unwrap();
-
-            let refs = history::refs(&dir).unwrap();
-            assert!(refs.heads.contains(&orphan));
-
-            let pool = pool().await;
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
-                .await
-                .unwrap();
-            let hashes: Vec<String> =
-                sqlx::query_scalar!("SELECT hash FROM node WHERE view_id = 'all'")
-                    .fetch_all(&pool)
-                    .await
-                    .unwrap();
-            assert!(hashes.contains(&orphan.to_string()));
-            std::fs::remove_dir_all(dir).unwrap();
-        });
-    }
-
-    #[test]
-    fn a_deleted_branch_leaves_the_view_and_an_unchanged_walk_stays_quiet() {
-        tauri::async_runtime::block_on(async {
-            let (dir, repo, _refs) = repository("relayout", 1);
-            let a = repo.head().unwrap().target().unwrap();
-            let b = detached_commit(&repo, "gone work", &[a]);
-            repo.branch("gone", &repo.find_commit(b).unwrap(), true)
-                .unwrap();
-
-            let pool = pool().await;
-            walk(
-                &pool,
-                &dir,
-                &history::refs(&dir).unwrap(),
-                2,
-                &|_, _, _, _| {},
-                &|| false,
-            )
-            .await
-            .unwrap();
-            assert_eq!(cache::progress(&pool).await.unwrap().laid, 2);
-
-            // the branch is gone, so its commit leaves the view
-            repo.find_branch("gone", git2::BranchType::Local)
-                .unwrap()
-                .delete()
-                .unwrap();
-            let refs = history::refs(&dir).unwrap();
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
-                .await
-                .unwrap();
-            let progress = cache::progress(&pool).await.unwrap();
-            assert_eq!(
-                (progress.indexed, progress.laid, progress.complete),
-                (2, 1, true)
-            );
-            assert_eq!(
-                cache::meta(&pool, "fingerprint").await.unwrap().as_deref(),
-                Some(refs.fingerprint().as_str())
-            );
-
-            // nothing changed: no report, although the cache holds one more
-            // commit than the view shows
-            let reports = AtomicUsize::new(0);
-            walk(
-                &pool,
-                &dir,
-                &refs,
-                2,
-                &|_, _, _, _| {
-                    reports.fetch_add(1, Ordering::SeqCst);
-                },
-                &|| false,
-            )
-            .await
-            .unwrap();
-            assert_eq!(reports.load(Ordering::SeqCst), 0);
-
-            std::fs::remove_dir_all(dir).unwrap();
-        });
-    }
-
-    #[test]
-    fn a_fetched_remote_tip_marks_its_commits_pushed_without_drawing_them() {
-        tauri::async_runtime::block_on(async {
-            let (dir, repo, _refs) = repository("remote", 1);
-            let a = repo.head().unwrap().target().unwrap();
-            // the remote fetched a child of A that main does not have yet
-            let b = detached_commit(&repo, "on the remote", &[a]);
-            repo.reference("refs/remotes/origin/main", b, true, "fetch")
-                .unwrap();
-
-            let refs = history::refs(&dir).unwrap();
-            assert_eq!(refs.remote_tips, [b]);
-            let pool = pool().await;
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
-                .await
-                .unwrap();
-
-            let a_hash = a.to_string();
-            let pushed: i64 = sqlx::query_scalar!(
-                "SELECT pushed FROM node WHERE view_id = 'all' AND hash = ?",
-                a_hash
-            )
+        let progress = cache::progress(&pool).await.unwrap();
+        assert_eq!(
+            (progress.indexed, progress.laid, progress.complete),
+            (5, 5, true)
+        );
+        assert!(reports.load(Ordering::SeqCst) >= 2);
+        let rows: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM node WHERE view_id = 'all'")
             .fetch_one(&pool)
             .await
             .unwrap();
-            assert_eq!(pushed, 1);
-            let b_hash = b.to_string();
-            let remote_only: i64 = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM node WHERE view_id = 'all' AND hash = ?",
-                b_hash
-            )
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-            assert_eq!(remote_only, 0);
-            std::fs::remove_dir_all(dir).unwrap();
-        });
+        assert_eq!(rows, 5);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn a_shallow_clone_is_walked_to_where_its_history_ends() {
-        tauri::async_runtime::block_on(async {
-            let (source, _repo, _refs) = repository("shallow-source", 3);
-            let dir = scratch("shallow");
-            // libgit2 cannot make a shallow clone, the git CLI can; a local
-            // path only honours --depth through the transport --no-local picks
-            let cloned = std::process::Command::new("git")
-                .args(["clone", "--quiet", "--no-local", "--depth", "1"])
-                .arg(&source)
-                .arg(&dir)
-                .status()
-                .unwrap();
-            assert!(cloned.success());
-            assert!(dir.join(".git").join("shallow").exists());
+    #[tokio::test]
+    async fn an_interrupted_walk_resumes_where_it_stopped() {
+        let (dir, _repo, refs) = repository("resume", 6);
+        let pool = pool().await;
+        let calls = AtomicUsize::new(0);
 
-            let refs = history::refs(&dir).unwrap();
-            let pool = pool().await;
-            walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+        walk(
+            &pool,
+            &dir,
+            &refs,
+            2,
+            &|_, _, _, _| {
+                calls.fetch_add(1, Ordering::SeqCst);
+            },
+            &|| calls.load(Ordering::SeqCst) > 0,
+        )
+        .await
+        .unwrap();
+
+        let stopped = cache::progress(&pool).await.unwrap();
+        assert!(!stopped.complete);
+        assert!(stopped.indexed > 0 && stopped.indexed < 6);
+        assert!(!cache::pending(&pool).await.unwrap().is_empty());
+
+        // starting again picks the work list up where it was left
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+
+        let done = cache::progress(&pool).await.unwrap();
+        assert_eq!((done.indexed, done.laid, done.complete), (6, 6, true));
+        assert!(cache::pending(&pool).await.unwrap().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_second_walk_only_reads_what_is_new() {
+        let (dir, repo, refs) = repository("again", 4);
+        let pool = pool().await;
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+        let version = cache::meta(&pool, "version").await.unwrap();
+
+        // nothing changed: the walk does not even lay out again
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+        assert_eq!(cache::meta(&pool, "version").await.unwrap(), version);
+
+        // one more commit: it is read, and the view grows by one
+        let tip = refs.head.unwrap();
+        commit(&repo, "later", &[tip]);
+        let refs = history::refs(&dir).unwrap();
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+
+        let progress = cache::progress(&pool).await.unwrap();
+        assert_eq!(
+            (progress.indexed, progress.laid, progress.complete),
+            (5, 5, true)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_walk_after_the_refs_moved_is_not_complete_until_it_is_through() {
+        let (dir, repo, refs) = repository("rewalk", 3);
+        let pool = pool().await;
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+        assert!(cache::progress(&pool).await.unwrap().complete);
+
+        // a new commit, and a walk that stops after its first report
+        commit(&repo, "later", &[refs.head.unwrap()]);
+        let refs = history::refs(&dir).unwrap();
+        let reports = Mutex::new(Vec::new());
+        walk(
+            &pool,
+            &dir,
+            &refs,
+            2,
+            &|_, _, _, complete| reports.lock().unwrap().push(complete),
+            &|| !reports.lock().unwrap().is_empty(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(*reports.lock().unwrap(), [false]);
+        assert!(!cache::progress(&pool).await.unwrap().complete);
+
+        // the rest of the walk is what makes it whole again
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+        let progress = cache::progress(&pool).await.unwrap();
+        assert_eq!(
+            (progress.indexed, progress.laid, progress.complete),
+            (4, 4, true)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_amended_tip_leaves_the_old_one_out_of_the_view() {
+        let (dir, repo, _refs) = repository("amend", 3);
+        let root = scratch("amend-cache");
+        let app = app_with_cache(&root);
+        let cache = cache::open(app.handle(), WORKSPACE, REAL).await.unwrap();
+        let entry = Repo::new(REAL.into(), dir.clone(), cache);
+
+        sync(app.handle(), &entry).await.unwrap();
+        let old = repo.head().unwrap().target().unwrap();
+        // a head an earlier open had noted, as the cache's `heads` key did
+        cache::set_meta(
+            &entry.cache.pool,
+            &[("heads", serde_json::to_string(&[old.to_string()]).unwrap())],
+        )
+        .await
+        .unwrap();
+
+        // the tip is replaced by a sibling on the same parent
+        let parent = repo.find_commit(old).unwrap().parent(0).unwrap().id();
+        let new = detached_commit(&repo, "rewritten", &[parent]);
+        repo.reference("refs/heads/main", new, true, "rewritten")
+            .unwrap();
+        assert_ne!(old, new);
+
+        sync(app.handle(), &entry).await.unwrap();
+
+        let hashes: Vec<String> =
+            sqlx::query_scalar!("SELECT hash FROM node WHERE view_id = 'all'")
+                .fetch_all(&entry.cache.pool)
                 .await
                 .unwrap();
+        assert!(hashes.contains(&new.to_string()));
+        assert!(!hashes.contains(&old.to_string()));
 
-            // the parent the clone does not have is not looked for
-            let progress = cache::progress(&pool).await.unwrap();
-            assert_eq!(
-                (progress.indexed, progress.laid, progress.complete),
-                (1, 1, true)
-            );
-            std::fs::remove_dir_all(dir).unwrap();
-            std::fs::remove_dir_all(source).unwrap();
-        });
+        maintenance::close(&entry.cache.pool).await;
+        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn the_detached_head_of_a_linked_worktree_is_walked() {
+        let (dir, repo, _refs) = repository("worktree-head", 1);
+        let linked = dir.join("feature");
+        repo.worktree("feature", &linked, None).unwrap();
+
+        // a commit only the linked worktree's HEAD points at
+        let head = repo.head().unwrap().target().unwrap();
+        let orphan = detached_commit(&repo, "detached work", &[head]);
+        git2::Repository::open(&linked)
+            .unwrap()
+            .set_head_detached(orphan)
+            .unwrap();
+
+        let refs = history::refs(&dir).unwrap();
+        assert!(refs.heads.contains(&orphan));
+
+        let pool = pool().await;
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+        let hashes: Vec<String> =
+            sqlx::query_scalar!("SELECT hash FROM node WHERE view_id = 'all'")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(hashes.contains(&orphan.to_string()));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_deleted_branch_leaves_the_view_and_an_unchanged_walk_stays_quiet() {
+        let (dir, repo, _refs) = repository("relayout", 1);
+        let a = repo.head().unwrap().target().unwrap();
+        let b = detached_commit(&repo, "gone work", &[a]);
+        repo.branch("gone", &repo.find_commit(b).unwrap(), true)
+            .unwrap();
+
+        let pool = pool().await;
+        walk(
+            &pool,
+            &dir,
+            &history::refs(&dir).unwrap(),
+            2,
+            &|_, _, _, _| {},
+            &|| false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(cache::progress(&pool).await.unwrap().laid, 2);
+
+        // the branch is gone, so its commit leaves the view
+        repo.find_branch("gone", git2::BranchType::Local)
+            .unwrap()
+            .delete()
+            .unwrap();
+        let refs = history::refs(&dir).unwrap();
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+        let progress = cache::progress(&pool).await.unwrap();
+        assert_eq!(
+            (progress.indexed, progress.laid, progress.complete),
+            (2, 1, true)
+        );
+        assert_eq!(
+            cache::meta(&pool, "fingerprint").await.unwrap().as_deref(),
+            Some(refs.fingerprint().as_str())
+        );
+
+        // nothing changed: no report, although the cache holds one more
+        // commit than the view shows
+        let reports = AtomicUsize::new(0);
+        walk(
+            &pool,
+            &dir,
+            &refs,
+            2,
+            &|_, _, _, _| {
+                reports.fetch_add(1, Ordering::SeqCst);
+            },
+            &|| false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(reports.load(Ordering::SeqCst), 0);
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_fetched_remote_tip_marks_its_commits_pushed_without_drawing_them() {
+        let (dir, repo, _refs) = repository("remote", 1);
+        let a = repo.head().unwrap().target().unwrap();
+        // the remote fetched a child of A that main does not have yet
+        let b = detached_commit(&repo, "on the remote", &[a]);
+        repo.reference("refs/remotes/origin/main", b, true, "fetch")
+            .unwrap();
+
+        let refs = history::refs(&dir).unwrap();
+        assert_eq!(refs.remote_tips, [b]);
+        let pool = pool().await;
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+
+        let a_hash = a.to_string();
+        let pushed: i64 = sqlx::query_scalar!(
+            "SELECT pushed FROM node WHERE view_id = 'all' AND hash = ?",
+            a_hash
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(pushed, 1);
+        let b_hash = b.to_string();
+        let remote_only: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM node WHERE view_id = 'all' AND hash = ?",
+            b_hash
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(remote_only, 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_shallow_clone_is_walked_to_where_its_history_ends() {
+        let (source, _repo, _refs) = repository("shallow-source", 3);
+        let dir = scratch("shallow");
+        // libgit2 cannot make a shallow clone, the git CLI can; a local
+        // path only honours --depth through the transport --no-local picks
+        let cloned = std::process::Command::new("git")
+            .args(["clone", "--quiet", "--no-local", "--depth", "1"])
+            .arg(&source)
+            .arg(&dir)
+            .status()
+            .unwrap();
+        assert!(cloned.success());
+        assert!(dir.join(".git").join("shallow").exists());
+
+        let refs = history::refs(&dir).unwrap();
+        let pool = pool().await;
+        walk(&pool, &dir, &refs, 2, &|_, _, _, _| {}, &|| false)
+            .await
+            .unwrap();
+
+        // the parent the clone does not have is not looked for
+        let progress = cache::progress(&pool).await.unwrap();
+        assert_eq!(
+            (progress.indexed, progress.laid, progress.complete),
+            (1, 1, true)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(source).unwrap();
     }
 
     /// A change of `kind` to `paths`.
@@ -1762,92 +1730,86 @@ mod tests {
     }
 
     #[cfg(target_os = "linux")]
-    #[test]
-    fn reading_the_refs_does_not_wake_the_worker() {
-        tauri::async_runtime::block_on(async {
-            let (dir, repo, _refs) = repository("reads", 2);
-            let (entry, _watcher) = watched(&dir).await;
+    #[tokio::test]
+    async fn reading_the_refs_does_not_wake_the_worker() {
+        let (dir, repo, _refs) = repository("reads", 2);
+        let (entry, _watcher) = watched(&dir).await;
 
-            // what every sync does first
-            history::refs(&dir).unwrap();
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            assert!(!entry.dirty.load(Ordering::SeqCst));
+        // what every sync does first
+        history::refs(&dir).unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!entry.dirty.load(Ordering::SeqCst));
 
-            // while a new commit still does
-            let tip = repo.head().unwrap().target().unwrap();
-            commit(&repo, "more", &[tip]);
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            assert!(entry.dirty.load(Ordering::SeqCst));
+        // while a new commit still does
+        let tip = repo.head().unwrap().target().unwrap();
+        commit(&repo, "more", &[tip]);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(entry.dirty.load(Ordering::SeqCst));
 
-            std::fs::remove_dir_all(dir).unwrap();
-        });
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[cfg(target_os = "linux")]
-    #[test]
-    fn the_watcher_does_not_follow_a_linked_directory() {
-        tauri::async_runtime::block_on(async {
-            let (dir, _repo, _refs) = repository("linked", 1);
-            let outside = scratch("linked-outside");
-            std::fs::create_dir_all(outside.join("deep")).unwrap();
-            std::os::unix::fs::symlink(&outside, dir.join(".git/refs/x")).unwrap();
-            let (entry, _watcher) = watched(&dir).await;
+    #[tokio::test]
+    async fn the_watcher_does_not_follow_a_linked_directory() {
+        let (dir, _repo, _refs) = repository("linked", 1);
+        let outside = scratch("linked-outside");
+        std::fs::create_dir_all(outside.join("deep")).unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join(".git/refs/x")).unwrap();
+        let (entry, _watcher) = watched(&dir).await;
 
-            std::fs::write(outside.join("deep/file"), "changed").unwrap();
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            assert!(!entry.dirty.load(Ordering::SeqCst));
+        std::fs::write(outside.join("deep/file"), "changed").unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!entry.dirty.load(Ordering::SeqCst));
 
-            std::fs::remove_dir_all(dir).unwrap();
-            std::fs::remove_dir_all(outside).unwrap();
-        });
+        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
     }
 
-    #[test]
+    #[tokio::test]
     #[ignore = "reads a real repository; set VOGT_REPO and VOGT_CACHE to run"]
-    fn measure_a_real_repository() {
+    async fn measure_a_real_repository() {
         use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
         let path = std::env::var("VOGT_REPO").unwrap();
         let file = std::env::var("VOGT_CACHE").unwrap();
         let _ = std::fs::remove_file(&file);
-        tauri::async_runtime::block_on(async {
-            let pool = sqlx::sqlite::SqlitePoolOptions::new()
-                .max_connections(4)
-                .connect_with(
-                    SqliteConnectOptions::new()
-                        .filename(&file)
-                        .create_if_missing(true)
-                        .journal_mode(SqliteJournalMode::Wal)
-                        .synchronous(SqliteSynchronous::Normal),
-                )
-                .await
-                .unwrap();
-            // the mode `cache::open` gives a new file, which every write pays for
-            maintenance::incremental(&pool).await.unwrap();
-            cache::prepare(&pool).await.unwrap();
-            let path = Path::new(&path);
-            let refs = history::refs(path).unwrap();
-            let start = Instant::now();
-            walk(
-                &pool,
-                path,
-                &refs,
-                BATCH,
-                &|version, indexed, laid, complete| {
-                    eprintln!(
-                        "round v{version}: indexed {indexed}, laid {laid}, complete {complete} ({:.1}s)",
-                        start.elapsed().as_secs_f32()
-                    );
-                },
-                &|| false,
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(4)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(&file)
+                    .create_if_missing(true)
+                    .journal_mode(SqliteJournalMode::Wal)
+                    .synchronous(SqliteSynchronous::Normal),
             )
             .await
             .unwrap();
-            eprintln!("walk done in {:.1}s", start.elapsed().as_secs_f32());
-            let progress = cache::progress(&pool).await.unwrap();
-            eprintln!(
-                "progress: indexed {} laid {} complete {}",
-                progress.indexed, progress.laid, progress.complete
-            );
-        });
+        // the mode `cache::open` gives a new file, which every write pays for
+        maintenance::incremental(&pool).await.unwrap();
+        cache::prepare(&pool).await.unwrap();
+        let path = Path::new(&path);
+        let refs = history::refs(path).unwrap();
+        let start = Instant::now();
+        walk(
+            &pool,
+            path,
+            &refs,
+            BATCH,
+            &|version, indexed, laid, complete| {
+                eprintln!(
+                    "round v{version}: indexed {indexed}, laid {laid}, complete {complete} ({:.1}s)",
+                    start.elapsed().as_secs_f32()
+                );
+            },
+            &|| false,
+        )
+        .await
+        .unwrap();
+        eprintln!("walk done in {:.1}s", start.elapsed().as_secs_f32());
+        let progress = cache::progress(&pool).await.unwrap();
+        eprintln!(
+            "progress: indexed {} laid {} complete {}",
+            progress.indexed, progress.laid, progress.complete
+        );
     }
 }
