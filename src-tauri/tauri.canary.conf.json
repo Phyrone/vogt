@@ -2,5 +2,8 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "vogt-canary",
   "mainBinaryName": "vogt-canary",
-  "identifier": "de.phyrone.vogt.canary"
+  "identifier": "de.phyrone.vogt.canary",
+  "bundle": {
+    "targets": ["app", "dmg", "deb", "rpm", "appimage", "nsis"]
+  }
 }

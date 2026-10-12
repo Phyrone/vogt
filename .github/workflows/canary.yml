@@ -41,14 +41,14 @@ jobs:
           fetch-depth: 0
 
       # The updater only installs a higher version, so every build needs one
-      # above the build before it: the declared major and minor, then the
-      # number of commits. Canary is an app of its own, so its versions only
-      # have to be in order among themselves.
+      # above the build before it: the number of commits, as the major version.
+      # Canary is an app of its own, so its versions only have to be in order
+      # among themselves. An MSI allows no major version above 255, which is
+      # why tauri.canary.conf.json leaves that installer out.
       - name: Give the build a version
         id: version
         run: |
-          IFS=. read -r major minor _ <<< "$(jq -r .version package.json)"
-          echo "version=$major.$minor.$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
+          echo "version=$(git rev-list --count HEAD).0.0" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       # A draft, so the canary in use stays up until this one is complete.
