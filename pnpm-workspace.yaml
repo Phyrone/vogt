@@ -2,3 +2,8 @@ allowBuilds:
   esbuild: true
 onlyBuiltDependencies:
   - esbuild
+# Renovate waits 7 days before offering a release; pnpm 12 in CI refuses a
+# lockfile entry younger than 24h. Resolution must honor the same floor, or a
+# fresh transitive release (like the inlang sdk under paraglide-js) lands in the
+# lockfile and every CI job fails in the install step.
+minimumReleaseAge: 1440
