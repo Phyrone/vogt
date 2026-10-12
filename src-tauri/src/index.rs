@@ -31,14 +31,14 @@ use tokio::sync::Notify;
 use crate::{
     cache::{self, Cache, Fact},
     history::{self, Refs},
-    maintenance,
+    maintenance::{self, Pass},
 };
 
 /// How many commits one turn of the walk reads at once.
 const BATCH: usize = 2_000;
 /// How long the worker lets file changes settle before syncing.
 const QUIET: Duration = Duration::from_millis(400);
-/// How long the exit waits for the workers to stop and the caches to close.
+/// How long the exit waits for a worker to stop.
 const SHUTDOWN: Duration = Duration::from_secs(5);
 
 /// A registered repository whose cache is kept up to date.
@@ -229,7 +229,7 @@ async fn worker<R: tauri::Runtime>(app: AppHandle<R>, repo: Arc<Repo>) {
         // here rather than on a timer of its own: the worker is what writes
         // the cache, so a pass between two syncs never competes with one
         if tended.is_none_or(|at| at.elapsed() >= maintenance::EVERY) {
-            if let Err(e) = maintenance::tend(&repo.cache.pool).await {
+            if let Err(e) = maintenance::tend(&repo.cache.pool, Pass::Running).await {
                 eprintln!("vogt: tending the cache of {} failed: {e}", repo.id);
             }
             tended = Some(Instant::now());
@@ -246,9 +246,8 @@ impl Drop for Gone<'_> {
     }
 }
 
-/// Stops the worker of an entry, drops its watcher and closes its pool, so
-/// the cache file can be deleted and nothing the entry owns is left behind.
-async fn stop(repo: &Repo) {
+/// Stops the worker of an entry and drops its watcher; the cache stays open.
+async fn halt(repo: &Repo) {
     repo.stop.store(true, Ordering::SeqCst);
     repo.wake.notify_one();
     repo.stopped.notified().await;
@@ -257,16 +256,24 @@ async fn stop(repo: &Repo) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .take();
+}
+
+/// Stops the worker of an entry, drops its watcher and closes its pool, so
+/// the cache file can be deleted and nothing the entry owns is left behind.
+async fn stop(repo: &Repo) {
+    halt(repo).await;
     maintenance::close(&repo.cache.pool).await;
 }
 
-/// Stops every worker and closes every cache, for the app to exit: SQLite
-/// folds a write-ahead log into its file and removes it when the last
-/// connection closes, which a process that just ends never does.
+/// Stops every worker, gives every cache its exit pass and closes it, for the
+/// app to exit: SQLite folds a write-ahead log into its file and removes it
+/// when the last connection closes, which a process that just ends never does.
 ///
-/// A worker is only asked between two batches, and the exit must not hang on
-/// a long one: after [`SHUTDOWN`] the rest is left to SQLite's recovery and to
-/// the walk's own resuming on the next start.
+/// The exit pass takes as long as it takes; rebuilding a cache of gigabytes
+/// is the one thing that makes the exit wait noticeably, once per file. A
+/// worker in the middle of a batch is another matter: after [`SHUTDOWN`] its
+/// cache is left as it is, to SQLite's recovery and the walk's own resuming on
+/// the next start.
 pub async fn shutdown(repos: &Repos) {
     let open: Vec<Arc<Repo>> = repos
         .0
@@ -275,18 +282,24 @@ pub async fn shutdown(repos: &Repos) {
         .drain()
         .map(|(_, repo)| repo)
         .collect();
-    // side by side, so one busy repository does not use up the others' time
-    let stops: Vec<_> = open
+    // side by side, so the exit is as long as its longest cache
+    let exits: Vec<_> = open
         .into_iter()
-        .map(|repo| tauri::async_runtime::spawn(async move { stop(&repo).await }))
+        .map(|repo| {
+            tauri::async_runtime::spawn(async move {
+                if tokio::time::timeout(SHUTDOWN, halt(&repo)).await.is_err() {
+                    eprintln!("vogt: exiting while {} is still being indexed", repo.id);
+                    return;
+                }
+                if let Err(e) = maintenance::tend(&repo.cache.pool, Pass::Exit).await {
+                    eprintln!("vogt: tending the cache of {} failed: {e}", repo.id);
+                }
+                maintenance::close(&repo.cache.pool).await;
+            })
+        })
         .collect();
-    let stopped = async {
-        for stop in stops {
-            let _ = stop.await;
-        }
-    };
-    if tokio::time::timeout(SHUTDOWN, stopped).await.is_err() {
-        eprintln!("vogt: exiting before every repository cache was closed");
+    for exit in exits {
+        let _ = exit.await;
     }
 }
 
@@ -741,7 +754,7 @@ mod tests {
     }
 
     #[test]
-    fn a_synced_cache_is_tended_and_shutting_down_closes_it() {
+    fn a_synced_cache_is_tended_and_shutting_down_tends_and_closes_it() {
         tauri::async_runtime::block_on(async {
             let (dir, _repo, _refs) = repository("shutdown", 3);
             let root = scratch("shutdown-cache");
@@ -784,6 +797,19 @@ mod tests {
             }
             assert!(analyzed);
 
+            // a few free pages, which no running pass would bother with
+            sqlx::raw_sql(
+                "CREATE TABLE junk AS SELECT zeroblob(8000) AS data;
+                 DROP TABLE junk;",
+            )
+            .execute(pool)
+            .await
+            .unwrap();
+            let free: i64 = sqlx::query_scalar("PRAGMA freelist_count")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            assert!(free > 0);
             let file = real.cache.file.clone();
             assert!(file.with_extension("db-wal").exists());
 
@@ -795,6 +821,18 @@ mod tests {
             assert!(file.exists());
             assert!(!file.with_extension("db-wal").exists());
             assert!(!file.with_extension("db-shm").exists());
+
+            // and the exit pass handed the free pages back first
+            let closed = sqlx::sqlite::SqlitePoolOptions::new()
+                .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&file))
+                .await
+                .unwrap();
+            let free: i64 = sqlx::query_scalar("PRAGMA freelist_count")
+                .fetch_one(&closed)
+                .await
+                .unwrap();
+            assert_eq!(free, 0);
+            closed.close().await;
 
             std::fs::remove_dir_all(dir).unwrap();
             std::fs::remove_dir_all(root).unwrap();

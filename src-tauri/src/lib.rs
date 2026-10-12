@@ -42,9 +42,15 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let RunEvent::Exit = event {
-                // tauri-plugin-sql closes the pools the frontend opened, the
-                // app's database among them; the caches' own are closed here
-                tauri::async_runtime::block_on(index::shutdown(&app.state::<index::Repos>()));
+                // tauri-plugin-sql has closed the pools the frontend opened by
+                // now, the app's database among them; the caches' own are
+                // closed here, and every file gets its exit pass
+                tauri::async_runtime::block_on(async {
+                    index::shutdown(&app.state::<index::Repos>()).await;
+                    if let Err(failure) = maintenance::on_exit(app, DATABASE).await {
+                        eprintln!("vogt: tending the app database failed: {failure}");
+                    }
+                });
             }
         });
 }

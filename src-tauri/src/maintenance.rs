@@ -7,13 +7,20 @@
 //! mode so the second part stays cheap; a file that is not in that mode yet is
 //! rebuilt once with `VACUUM`.
 //!
+//! While the app runs a pass holds back, see [`Pass::Running`]; the pass every
+//! file gets when the app exits does all of it, see [`Pass::Exit`].
+//!
 //! A repository cache is tended by its own worker in `index.rs`, between two
-//! syncs. The app's database belongs to tauri-plugin-sql and the frontend, so
-//! [`start`] borrows the plugin's pool for it.
+//! syncs, and by `index::shutdown` on the way out. The app's database belongs
+//! to tauri-plugin-sql and the frontend, so [`start`] borrows the plugin's
+//! pool for it and [`on_exit`] opens the file once the plugin has let go.
 
 use std::time::Duration;
 
-use sqlx::{Pool, Row, Sqlite};
+use sqlx::{
+    Pool, Row, Sqlite,
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+};
 use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_sql::{DbInstances, DbPool};
 
@@ -27,9 +34,27 @@ const INCREMENTAL: i64 = 2;
 /// Free pages are handed back once they are one in this many of the file. Below
 /// that the next write takes them again, and truncating would only be churn.
 const SLACK: i64 = 4;
+/// The largest file, in pages, that is rebuilt while the app runs: 256 MB of
+/// the usual 4 KiB pages, which the tests cannot afford. A rebuild holds the
+/// file's write lock from start to end, about ten seconds for a gigabyte, and
+/// other writers give up after ten.
+const REBUILD: i64 = if cfg!(test) { 64 } else { 65_536 };
+
+/// When a pass runs, which decides how much it may hold the file up.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Pass {
+    /// While the app is used. Nothing that keeps a write waiting for long: a
+    /// file above [`REBUILD`] is not rebuilt, and free pages stay until they
+    /// are worth truncating the file for.
+    Running,
+    /// While the app exits. Nobody waits for the file any more, so whatever
+    /// the running passes left is done: the rebuild of a file of any size,
+    /// and every free page handed back.
+    Exit,
+}
 
 /// One maintenance pass over the file behind `pool`.
-pub async fn tend(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
+pub async fn tend(pool: &Pool<Sqlite>, pass: Pass) -> Result<(), sqlx::Error> {
     // `optimize` is ANALYZE for the tables that need it: the ones without
     // statistics or whose size changed tenfold since. 0x10000 checks every
     // table instead of the ones this connection happened to query, which in a
@@ -39,10 +64,13 @@ pub async fn tend(pool: &Pool<Sqlite>) -> Result<(), sqlx::Error> {
         .await?;
 
     let Space { pages, free, mode } = space(pool).await?;
+    let exiting = pass == Pass::Exit;
     if mode != INCREMENTAL {
         // the rebuild leaves no free page behind either
-        incremental(pool).await?;
-    } else if free > 0 && free * SLACK >= pages {
+        if exiting || pages <= REBUILD {
+            incremental(pool).await?;
+        }
+    } else if free > 0 && (exiting || free * SLACK >= pages) {
         sqlx::raw_sql("PRAGMA incremental_vacuum")
             .execute(pool)
             .await?;
@@ -126,7 +154,7 @@ pub fn start<R: Runtime>(app: &AppHandle<R>, name: &'static str) {
         loop {
             let wait = match plugin_pool(&app, name).await {
                 Some(pool) => {
-                    if let Err(failure) = tend(&pool).await {
+                    if let Err(failure) = tend(&pool, Pass::Running).await {
                         eprintln!("vogt: tending the app database failed: {failure}");
                     }
                     EVERY
@@ -136,6 +164,30 @@ pub fn start<R: Runtime>(app: &AppHandle<R>, name: &'static str) {
             tokio::time::sleep(wait).await;
         }
     });
+}
+
+/// The exit pass over the app's own database, `name` to tauri-plugin-sql.
+///
+/// The plugin closes its pools before the app hears of the exit, so the file
+/// is opened once more, from where the plugin keeps it.
+pub async fn on_exit<R: Runtime>(app: &AppHandle<R>, name: &str) -> Result<(), String> {
+    let file = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join(name.strip_prefix("sqlite:").unwrap_or(name));
+    if !file.exists() {
+        // the frontend never got as far as opening it
+        return Ok(());
+    }
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(SqliteConnectOptions::new().filename(file))
+        .await
+        .map_err(|e| e.to_string())?;
+    let tended = tend(&pool, Pass::Exit).await;
+    close(&pool).await;
+    tended.map_err(|e| e.to_string())
 }
 
 /// The pool tauri-plugin-sql holds for the database the frontend loaded as
@@ -151,7 +203,7 @@ async fn plugin_pool<R: Runtime>(app: &AppHandle<R>, name: &str) -> Option<Pool<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+    use sqlx::sqlite::SqliteJournalMode;
     use std::path::PathBuf;
 
     /// A database file of its own in the write-ahead log, as both kinds of
@@ -195,7 +247,7 @@ mod tests {
             fill(&pool, 10).await;
             assert_eq!(space(&pool).await.unwrap().mode, 0);
 
-            tend(&pool).await.unwrap();
+            tend(&pool, Pass::Running).await.unwrap();
 
             assert_eq!(space(&pool).await.unwrap().mode, INCREMENTAL);
             let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blobs")
@@ -217,7 +269,7 @@ mod tests {
             for round in 0..20 {
                 let (dir, pool) = file(&format!("close-{round}")).await;
                 fill(&pool, 10).await;
-                tend(&pool).await.unwrap();
+                tend(&pool, Pass::Exit).await.unwrap();
 
                 close(&pool).await;
 
@@ -229,6 +281,62 @@ mod tests {
                 assert_eq!(left, ["test.db"], "round {round}");
                 std::fs::remove_dir_all(dir).unwrap();
             }
+        });
+    }
+
+    #[test]
+    fn a_large_file_waits_for_the_exit_to_be_rebuilt() {
+        tauri::async_runtime::block_on(async {
+            let (dir, pool) = file("large").await;
+            fill(&pool, 100).await;
+            let before = space(&pool).await.unwrap();
+            assert!(before.pages > REBUILD);
+
+            // a rebuild would keep every other writer out for its whole length
+            tend(&pool, Pass::Running).await.unwrap();
+            assert_eq!(space(&pool).await.unwrap().mode, 0);
+
+            tend(&pool, Pass::Exit).await.unwrap();
+            assert_eq!(space(&pool).await.unwrap().mode, INCREMENTAL);
+            let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blobs")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(kept, 100);
+
+            pool.close().await;
+            std::fs::remove_dir_all(dir).unwrap();
+        });
+    }
+
+    #[test]
+    fn the_app_database_gets_its_exit_pass_where_the_plugin_keeps_it() {
+        use tauri::utils::config::{AppDirectoriesOverride, AppDirectoryOverrides};
+        tauri::async_runtime::block_on(async {
+            let (dir, pool) = file("app").await;
+            fill(&pool, 100).await;
+            pool.close().await;
+            let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+            context.config_mut().app.app_directories_override =
+                Some(AppDirectoriesOverride::Directories(AppDirectoryOverrides {
+                    config: Some(dir.clone()),
+                    ..Default::default()
+                }));
+            let app = tauri::test::mock_builder().build(context).unwrap();
+
+            on_exit(app.handle(), "sqlite:test.db").await.unwrap();
+            // a database the frontend never opened is nothing to fail over
+            on_exit(app.handle(), "sqlite:missing.db").await.unwrap();
+            assert!(!dir.join("missing.db").exists());
+
+            let pool = SqlitePoolOptions::new()
+                .connect_with(SqliteConnectOptions::new().filename(dir.join("test.db")))
+                .await
+                .unwrap();
+            assert_eq!(space(&pool).await.unwrap().mode, INCREMENTAL);
+
+            pool.close().await;
+            std::fs::remove_dir_all(dir).unwrap();
         });
     }
 
@@ -262,7 +370,7 @@ mod tests {
             incremental(&pool).await.unwrap();
             fill(&pool, 200).await;
             // the statistics take their own pages; have them before counting
-            tend(&pool).await.unwrap();
+            tend(&pool, Pass::Running).await.unwrap();
             let full = space(&pool).await.unwrap();
             assert_eq!(full.free, 0);
 
@@ -273,7 +381,7 @@ mod tests {
                 .unwrap();
             let few = space(&pool).await.unwrap().free;
             assert!(few > 0);
-            tend(&pool).await.unwrap();
+            tend(&pool, Pass::Running).await.unwrap();
             let kept = space(&pool).await.unwrap();
             assert_eq!((kept.pages, kept.free), (full.pages, few));
 
@@ -282,10 +390,22 @@ mod tests {
                 .execute(&pool)
                 .await
                 .unwrap();
-            tend(&pool).await.unwrap();
+            tend(&pool, Pass::Running).await.unwrap();
             let released = space(&pool).await.unwrap();
             assert_eq!(released.free, 0);
             assert!(released.pages < full.pages / 2);
+
+            // on the way out even a few are handed back
+            sqlx::raw_sql("DELETE FROM blobs WHERE id <= 155")
+                .execute(&pool)
+                .await
+                .unwrap();
+            let few = space(&pool).await.unwrap();
+            assert!(few.free > 0 && few.free * SLACK < few.pages);
+            tend(&pool, Pass::Exit).await.unwrap();
+            let left = space(&pool).await.unwrap();
+            assert_eq!(left.free, 0);
+            assert!(left.pages < few.pages);
 
             pool.close().await;
             std::fs::remove_dir_all(dir).unwrap();
@@ -301,7 +421,7 @@ mod tests {
             let log = dir.join("test.db-wal");
             assert!(std::fs::metadata(&log).unwrap().len() > 0);
 
-            tend(&pool).await.unwrap();
+            tend(&pool, Pass::Running).await.unwrap();
 
             assert_eq!(std::fs::metadata(&log).unwrap().len(), 0);
             let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blobs")
@@ -329,7 +449,7 @@ mod tests {
             .await
             .unwrap();
 
-            tend(&pool).await.unwrap();
+            tend(&pool, Pass::Running).await.unwrap();
 
             let stat: String =
                 sqlx::query_scalar("SELECT stat FROM sqlite_stat1 WHERE idx = 'lines_line'")
