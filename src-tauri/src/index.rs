@@ -653,6 +653,11 @@ pub async fn sync_repositories<R: tauri::Runtime>(
 
 /// Drops a repository's cache and stops keeping it in sync; answers with the
 /// cache file it deleted, for the frontend to close.
+///
+/// A worker still in a batch after [`SHUTDOWN`] is not waited for, as in
+/// [`rebuild_caches`]: its cache is closed in the background once the worker
+/// is through, and deleted unless the app exits or the repository is opened
+/// again first.
 #[tauri::command]
 pub async fn forget_repo<R: tauri::Runtime>(
     app: AppHandle<R>,
@@ -668,7 +673,32 @@ pub async fn forget_repo<R: tauri::Runtime>(
         .unwrap_or_else(|e| e.into_inner())
         .remove(&repo);
     if let Some(entry) = entry {
-        stop(&entry).await;
+        // every command that opens or drops a cache waits for the lock, so it
+        // is not held for a whole batch
+        if tokio::time::timeout(SHUTDOWN, halt(&entry)).await.is_err() {
+            eprintln!(
+                "vogt: {} is still being indexed; its cache is deleted after this batch",
+                entry.id
+            );
+            let file = cache::file(&app, &workspace, &repo)?;
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                // the worker leaves after its batch, as it was told to
+                halt(&entry).await;
+                maintenance::close(&entry.cache.pool).await;
+                let repos = app.state::<Repos>();
+                let _opening = repos.opening.lock().await;
+                // the exit has come, or a command opened the file again meanwhile
+                if repos.closed.load(Ordering::SeqCst) || repos.get(&repo).is_some() {
+                    return;
+                }
+                if let Err(failure) = cache::remove(&app, &workspace, &repo).await {
+                    eprintln!("vogt: deleting the cache of {repo} failed: {failure}");
+                }
+            });
+            return Ok(file.to_string_lossy().into_owned());
+        }
+        maintenance::close(&entry.cache.pool).await;
     }
     cache::remove(&app, &workspace, &repo)
         .await
@@ -1144,6 +1174,55 @@ mod tests {
             shutdown(&repos).await;
             std::fs::remove_dir_all(dir).unwrap();
             std::fs::remove_dir_all(root).unwrap();
+        });
+    }
+
+    #[test]
+    fn forgetting_a_busy_repository_deletes_its_cache_once_the_worker_is_through() {
+        tauri::async_runtime::block_on(async {
+            let (dir, _repo, _refs) = repository("busy-forget", 3);
+            let root = scratch("busy-forget-cache");
+            let app = app_with_cache(&root);
+            let repos = app.state::<Repos>();
+            // an entry whose worker is in a batch that outlasts the wait, as in
+            // the busy rebuild
+            let cache = cache::open(app.handle(), WORKSPACE, REAL).await.unwrap();
+            let busy = Arc::new(Repo::new(REAL.into(), dir.clone(), cache));
+            repos.open.lock().unwrap().insert(REAL.into(), busy.clone());
+            let file = busy.cache.file.clone();
+
+            // the command gives up on the worker and lets go of the lock, so
+            // the other commands do not wait for the batch
+            let removed = tokio::time::timeout(
+                SHUTDOWN * 3,
+                forget_repo(
+                    app.handle().clone(),
+                    app.state::<Repos>(),
+                    WORKSPACE.into(),
+                    REAL.into(),
+                ),
+            )
+            .await
+            .expect("forgetting waits for a worker a bounded time")
+            .unwrap();
+            assert_eq!(removed, file.to_string_lossy());
+            assert!(repos.get(REAL).is_none());
+            assert!(repos.opening.try_lock().is_ok());
+            assert!(file.exists());
+
+            // once the worker is through, its cache is closed and deleted
+            busy.stopped.send_replace(true);
+            for _ in 0..200 {
+                if !file.exists() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            assert!(busy.cache.pool.is_closed());
+            assert!(!file.exists());
+
+            let _ = std::fs::remove_dir_all(dir);
+            let _ = std::fs::remove_dir_all(root);
         });
     }
 
