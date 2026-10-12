@@ -50,6 +50,8 @@
 	const CHUNK = 100;
 	/** Skeleton rows shown past the end of what the index has laid out yet. */
 	const SKELETON = 40;
+	/** Chunks this far from the ones in view are let go, and asked for again when they come back. */
+	const KEEP = 4;
 
 	/** Leave the rest out instead of dimming it. */
 	let hide = $state(false);
@@ -73,7 +75,8 @@
 		const asked = epoch;
 		source.rows(chunk * CHUNK, (chunk + 1) * CHUNK, only).then(
 			(window) => {
-				if (asked !== epoch) return;
+				// a chunk let go while it was on its way is not kept either
+				if (asked !== epoch || !requested.has(chunk)) return;
 				chunks.set(chunk, window);
 				total = window.total;
 				lanes = window.lanes;
@@ -140,6 +143,12 @@
 		const [from, to] = [Math.floor(first / CHUNK), Math.floor(last / CHUNK)];
 		untrack(() => {
 			for (let chunk = from; chunk <= to; chunk++) load(chunk);
+			// a long history is not held whole: what is far out of view is read again when it is back
+			for (const chunk of requested) {
+				if (chunk >= from - KEEP && chunk <= to + KEEP) continue;
+				requested.delete(chunk);
+				chunks.delete(chunk);
+			}
 		});
 	});
 
