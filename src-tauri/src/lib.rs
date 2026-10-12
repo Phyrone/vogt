@@ -1,4 +1,4 @@
-use tauri::App;
+use tauri::{App, Manager, RunEvent};
 use tauri_plugin_sql::Migration;
 
 mod cache;
@@ -38,8 +38,15 @@ pub fn run() {
             update::check_update,
             update::install_update
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let RunEvent::Exit = event {
+                // tauri-plugin-sql closes the pools the frontend opened, the
+                // app's database among them; the caches' own are closed here
+                tauri::async_runtime::block_on(index::shutdown(&app.state::<index::Repos>()));
+            }
+        });
 }
 
 fn init_app<R: tauri::Runtime>(app: &mut App<R>) -> Result<(), Box<dyn std::error::Error>> {

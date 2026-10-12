@@ -8,7 +8,8 @@
 //! off instead of starting over. The frontend is told about both progress and
 //! finished rounds with `repo-changed` events.
 //!
-//! The worker is also what tends its cache file (see `maintenance.rs`).
+//! The worker is also what tends its cache file (see `maintenance.rs`), and
+//! [`shutdown`] closes every cache when the app exits.
 
 use std::{
     collections::{BinaryHeap, HashMap, HashSet},
@@ -37,6 +38,8 @@ use crate::{
 const BATCH: usize = 2_000;
 /// How long the worker lets file changes settle before syncing.
 const QUIET: Duration = Duration::from_millis(400);
+/// How long the exit waits for the workers to stop and the caches to close.
+const SHUTDOWN: Duration = Duration::from_secs(5);
 
 /// A registered repository whose cache is kept up to date.
 pub struct Repo {
@@ -255,6 +258,36 @@ async fn stop(repo: &Repo) {
         .unwrap_or_else(|e| e.into_inner())
         .take();
     repo.cache.pool.close().await;
+}
+
+/// Stops every worker and closes every cache, for the app to exit: SQLite
+/// folds a write-ahead log into its file and removes it when the last
+/// connection closes, which a process that just ends never does.
+///
+/// A worker is only asked between two batches, and the exit must not hang on
+/// a long one: after [`SHUTDOWN`] the rest is left to SQLite's recovery and to
+/// the walk's own resuming on the next start.
+pub async fn shutdown(repos: &Repos) {
+    let open: Vec<Arc<Repo>> = repos
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .drain()
+        .map(|(_, repo)| repo)
+        .collect();
+    // side by side, so one busy repository does not use up the others' time
+    let stops: Vec<_> = open
+        .into_iter()
+        .map(|repo| tauri::async_runtime::spawn(async move { stop(&repo).await }))
+        .collect();
+    let stopped = async {
+        for stop in stops {
+            let _ = stop.await;
+        }
+    };
+    if tokio::time::timeout(SHUTDOWN, stopped).await.is_err() {
+        eprintln!("vogt: exiting before every repository cache was closed");
+    }
 }
 
 /// Keeps one repository's cache current: reads its refs and walks it.
@@ -708,10 +741,10 @@ mod tests {
     }
 
     #[test]
-    fn a_synced_cache_is_tended() {
+    fn a_synced_cache_is_tended_and_shutting_down_closes_it() {
         tauri::async_runtime::block_on(async {
-            let (dir, _repo, _refs) = repository("tended", 3);
-            let root = scratch("tended-cache");
+            let (dir, _repo, _refs) = repository("shutdown", 3);
+            let root = scratch("shutdown-cache");
             std::fs::create_dir_all(&root).unwrap();
             let app = app_with_cache(&root);
             let list = vec![Registered {
@@ -751,14 +784,17 @@ mod tests {
             }
             assert!(analyzed);
 
-            forget_repo(
-                app.handle().clone(),
-                app.state::<Repos>(),
-                "ws".into(),
-                "real".into(),
-            )
-            .await
-            .unwrap();
+            let file = real.cache.file.clone();
+            assert!(file.with_extension("db-wal").exists());
+
+            shutdown(&repos).await;
+
+            // the last connection folded the log into the file and removed it
+            assert!(real.cache.pool.is_closed());
+            assert!(repos.get("real").is_none());
+            assert!(file.exists());
+            assert!(!file.with_extension("db-wal").exists());
+            assert!(!file.with_extension("db-shm").exists());
 
             std::fs::remove_dir_all(dir).unwrap();
             std::fs::remove_dir_all(root).unwrap();
