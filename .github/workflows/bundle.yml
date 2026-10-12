@@ -61,9 +61,13 @@ jobs:
           #   target: aarch64-pc-windows-msvc
           #   rustup: aarch64-pc-windows-msvc
     steps:
+      # nothing after this runs git with the checkout's token, and tauri-action
+      # uploads through the API with GITHUB_TOKEN; a token left in .git/config
+      # would be readable by every build script beside the signing key
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
+          persist-credentials: false
 
       # found here in seconds instead of at the end of the build
       - name: The updater can sign
