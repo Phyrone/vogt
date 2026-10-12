@@ -10,7 +10,9 @@ export default defineConfig({
 		'globalVariable',
 		// the user's own choice, keyed like the other app settings
 		'localStorage',
-		// the browser's language, which follows the system until a choice is made
+		// the browser's language, which is normally the OS language. Paraglide
+		// stores the first resolution under the key above, so the interface keeps
+		// that language until the settings pick another.
 		'preferredLanguage',
 		'baseLocale'
 	],
