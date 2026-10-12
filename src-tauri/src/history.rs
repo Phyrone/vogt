@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use git2::{BranchType, ErrorCode, Oid, Patch, Repository};
+use git2::{BranchType, DiffOptions, ErrorCode, Oid, Patch, Repository};
 use serde::Serialize;
 use sqlx::{Pool, Sqlite};
 use tauri::{AppHandle, State};
@@ -783,7 +783,13 @@ fn files(path: &Path, hash: &str) -> Result<Vec<FileChange>, git2::Error> {
         .ok()
         .map(|parent| parent.tree())
         .transpose()?;
-    let diff = repo.diff_tree_to_tree(before.as_ref(), Some(&commit.tree()?), None)?;
+    // a file that became a link, or the other way round, is one change of
+    // its path; without this it is a delete and an add of the same path,
+    // and the list is keyed by path
+    let mut options = DiffOptions::new();
+    options.include_typechange(true);
+    let diff =
+        repo.diff_tree_to_tree(before.as_ref(), Some(&commit.tree()?), Some(&mut options))?;
     diff.deltas()
         .enumerate()
         .map(|(index, delta)| {
@@ -1297,6 +1303,29 @@ mod tests {
             assert_eq!(lines, ["main"]);
             std::fs::remove_dir_all(dir).unwrap();
         });
+    }
+
+    #[test]
+    fn a_file_that_becomes_a_link_is_listed_once() {
+        let dir = scratch("typechange");
+        let repo = init(&dir);
+        let first = commit(&repo, "main", "a file", "content\n", &[]);
+        // built with the tree builder rather than the file system, so it
+        // runs where links cannot be made
+        let mut tree = repo.treebuilder(None).unwrap();
+        tree.insert("file.txt", repo.blob(b"elsewhere.txt").unwrap(), 0o120000)
+            .unwrap();
+        let tree = repo.find_tree(tree.write().unwrap()).unwrap();
+        let signature = git2::Signature::now("Vogt", "vogt@example.com").unwrap();
+        let parent = repo.find_commit(first).unwrap();
+        let link = repo
+            .commit(None, &signature, &signature, "a link", &tree, &[&parent])
+            .unwrap();
+
+        let changes = files(&dir, &link.to_string()).unwrap();
+        let paths: Vec<&Path> = changes.iter().map(|change| change.path.as_path()).collect();
+        assert_eq!(paths, [Path::new("file.txt")]);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
