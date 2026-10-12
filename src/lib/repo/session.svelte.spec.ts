@@ -1,6 +1,7 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 import type { Changed } from '#lib/bindings/Changed.ts';
-import { readRepository, type Opened } from './history.ts';
+import type { RepoDatabase } from '#lib/db/repo.ts';
+import { materializeView, readRepository, type Opened } from './history.ts';
 import { RepoSession } from './session.svelte.ts';
 
 // the backend's events, handed to whoever listens
@@ -19,7 +20,13 @@ vi.mock('@tauri-apps/api/event', () => ({
 }));
 vi.mock('./history.ts', async (original) => ({
 	...(await original<typeof import('./history.ts')>()),
-	readRepository: vi.fn()
+	readRepository: vi.fn(),
+	materializeView: vi.fn()
+}));
+vi.mock('#lib/db/repo.ts', async (original) => ({
+	...(await original<typeof import('#lib/db/repo.ts')>()),
+	window: async () => ({ rows: [], edges: [] }),
+	locate: async () => null
 }));
 
 // a real repository whose history is not laid out yet; the cache is never read here
@@ -51,7 +58,10 @@ const changed = (version: number): Changed => ({
 
 const settle = () => new Promise((done) => setTimeout(done, 0));
 
-beforeEach(() => vi.mocked(readRepository).mockReset());
+beforeEach(() => {
+	vi.mocked(readRepository).mockReset();
+	vi.mocked(materializeView).mockReset();
+});
 
 test('a refresh that failed is asked for again by the next event', async () => {
 	const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -73,4 +83,31 @@ test('a refresh that failed is asked for again by the next event', async () => {
 	expect(readRepository).toHaveBeenCalledTimes(2);
 	expect(session.version).toBe(2);
 	error.mockRestore();
+});
+
+test('one mask is laid out once for all the chunks that ask for it', async () => {
+	const session = new RepoSession(
+		{ ...opened(1), db: {} as RepoDatabase },
+		'ws',
+		'repo',
+		'/tmp/repo'
+	);
+	const masked = { id: 'v', only: ['a', 'b'], total: 0, lanes: 1, version: 1 };
+	vi.mocked(materializeView).mockResolvedValue(masked);
+
+	// the first paint asks for two chunks at once, the lines in any order
+	await Promise.all([session.rows(0, 100, ['b', 'a']), session.rows(100, 200, ['a', 'b', 'a'])]);
+	expect(materializeView).toHaveBeenCalledOnce();
+
+	// a new version lays it out again
+	vi.mocked(readRepository).mockResolvedValueOnce({ ...opened(2), db: {} as RepoDatabase });
+	await session.refresh();
+	await session.rows(0, 100, ['a', 'b']);
+	expect(materializeView).toHaveBeenCalledTimes(2);
+
+	// and a mask that failed is asked for again
+	vi.mocked(materializeView).mockRejectedValueOnce(new Error('busy'));
+	await expect(session.rows(0, 100, ['c'])).rejects.toThrow('busy');
+	await session.rows(0, 100, ['c']);
+	expect(materializeView).toHaveBeenCalledTimes(4);
 });

@@ -40,6 +40,10 @@ export class RepoSession {
 	#db: RepoDatabase | null;
 	/** The changed version a refresh is already running for. */
 	#asked = 0;
+	/** The masked views asked for at `#viewsOf`, by their lines, so a mask is laid out once. */
+	// eslint-disable-next-line svelte/prefer-svelte-reactivity -- bookkeeping nothing is drawn from
+	#views = new Map<string, Promise<ViewInfo>>();
+	#viewsOf = 0;
 
 	/** The synthetic history: newest first; uncommitted work, when there is any, is the first row. */
 	#listed = $derived.by((): Commit[] => {
@@ -141,7 +145,7 @@ export class RepoSession {
 			return layoutWindow(listed, this.trunk, from, to);
 		}
 		if (!this.#db) throw new Error('This repository’s cache is not open.');
-		const view = only.length ? await materializeView(this.repoId, only) : this.view;
+		const view = only.length ? await this.#masked(only) : this.view;
 		if (!view) throw new Error('This repository’s history is not laid out yet.');
 		const { rows, edges } = await repoWindow(this.#db, view, from, to);
 		const now = Date.now();
@@ -151,6 +155,28 @@ export class RepoSession {
 			rows: rows.map((row) => toHistoryRow(row, now)),
 			edges: edges.map(toHistoryEdge)
 		};
+	}
+
+	/** The view of the lines `only`; the chunks of one paint ask for it at the same time. */
+	#masked(only: string[]): Promise<ViewInfo> {
+		if (this.#viewsOf !== this.version) {
+			this.#views.clear();
+			this.#viewsOf = this.version;
+		}
+		const key = [...only]
+			.sort()
+			.filter((line, index, all) => line !== all[index - 1])
+			.join('\n');
+		let view = this.#views.get(key);
+		if (!view) {
+			const asked = materializeView(this.repoId, only);
+			this.#views.set(key, asked);
+			asked.catch(() => {
+				if (this.#views.get(key) === asked) this.#views.delete(key);
+			});
+			view = asked;
+		}
+		return view;
 	}
 
 	/** The row the commit `hash` sits in, of the unmasked view. */
