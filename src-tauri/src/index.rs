@@ -75,11 +75,17 @@ impl Repo {
 
 /// The repositories the app keeps in sync, by registry id.
 #[derive(Default)]
-pub struct Repos(Mutex<HashMap<String, Arc<Repo>>>);
+pub struct Repos {
+    open: Mutex<HashMap<String, Arc<Repo>>>,
+    /// Held while an entry is opened, so two commands that both miss one do
+    /// not open its file side by side: on a new file, a migration that fails
+    /// in one resets the tables under the other.
+    opening: tokio::sync::Mutex<()>,
+}
 
 impl Repos {
     pub fn get(&self, repo: &str) -> Option<Arc<Repo>> {
-        self.0
+        self.open
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get(repo)
@@ -121,17 +127,42 @@ pub async fn ensure<R: tauri::Runtime>(
     if let Some(existing) = repos.get(repo) {
         return Ok(existing);
     }
-    let cache = cache::open(app, workspace, repo).await?;
-    let entry = Arc::new(Repo::new(repo.to_owned(), path.to_owned(), cache));
-    {
-        let mut map = repos.0.lock().unwrap_or_else(|e| e.into_inner());
-        // another command may have opened it while this one awaited
-        if let Some(existing) = map.get(repo) {
-            return Ok(existing.clone());
-        }
-        *entry.watcher.lock().unwrap_or_else(|e| e.into_inner()) = Some(watch(&entry)?);
-        map.insert(repo.to_owned(), entry.clone());
+    let _opening = repos.opening.lock().await;
+    // another command may have opened it while this one waited
+    if let Some(existing) = repos.get(repo) {
+        return Ok(existing);
     }
+    let cache = cache::open(app, workspace, repo).await?;
+    start(
+        app,
+        repos,
+        Repo::new(repo.to_owned(), path.to_owned(), cache),
+    )
+    .await
+}
+
+/// Watches a freshly opened entry, puts it into `repos` and starts its worker.
+/// The caller holds `repos.opening`.
+async fn start<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    repos: &Repos,
+    repo: Repo,
+) -> Result<Arc<Repo>, String> {
+    let entry = Arc::new(repo);
+    match watch(&entry) {
+        Ok(watcher) => *entry.watcher.lock().unwrap_or_else(|e| e.into_inner()) = Some(watcher),
+        Err(failure) => {
+            // nothing else holds the entry, so its pool would only be dropped,
+            // leaving the file's write-ahead log behind
+            maintenance::close(&entry.cache.pool).await;
+            return Err(failure);
+        }
+    }
+    repos
+        .open
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(entry.id.clone(), entry.clone());
     tauri::async_runtime::spawn(worker(app.clone(), entry.clone()));
     entry.wake.notify_one();
     Ok(entry)
@@ -281,8 +312,10 @@ async fn stop(repo: &Repo) {
 /// gigabytes is the one thing that makes the exit wait noticeably, once per
 /// file.
 pub async fn shutdown(repos: &Repos) {
+    // an entry still being opened goes in first, and is drained with the rest
+    let _opening = repos.opening.lock().await;
     let open: Vec<Arc<Repo>> = repos
-        .0
+        .open
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .drain()
@@ -545,7 +578,9 @@ pub async fn sync_repositories<R: tauri::Runtime>(
         .map(|registered| registered.id.clone())
         .collect();
     let gone: Vec<Arc<Repo>> = {
-        let mut map = repos.0.lock().unwrap_or_else(|e| e.into_inner());
+        // an entry still being opened goes in first, so it can be told to go
+        let _opening = repos.opening.lock().await;
+        let mut map = repos.open.lock().unwrap_or_else(|e| e.into_inner());
         let gone = map
             .values()
             .filter(|repo| !wanted.contains(&repo.id))
@@ -584,8 +619,10 @@ pub async fn forget_repo<R: tauri::Runtime>(
     workspace: String,
     repo: String,
 ) -> Result<String, String> {
+    // held until the file is gone, so no command opens it again meanwhile
+    let _opening = repos.opening.lock().await;
     let entry = repos
-        .0
+        .open
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(&repo);
@@ -774,6 +811,45 @@ mod tests {
             assert!(!file.with_extension("db-wal").exists());
             assert!(!file.with_extension("db-shm").exists());
 
+            std::fs::remove_dir_all(dir).unwrap();
+            std::fs::remove_dir_all(root).unwrap();
+        });
+    }
+
+    #[test]
+    fn two_commands_opening_a_new_cache_at_once_share_one_entry() {
+        tauri::async_runtime::block_on(async {
+            let (dir, _repo, _refs) = repository("together", 3);
+            let root = scratch("together-cache");
+            let app = app_with_cache(&root);
+            let open = || {
+                let app = app.handle().clone();
+                let dir = dir.clone();
+                tauri::async_runtime::spawn(async move {
+                    ensure(&app, &app.state::<Repos>(), WORKSPACE, REAL, &dir)
+                        .await
+                        .unwrap()
+                })
+            };
+            let (first, second) = (open(), open());
+            let (first, second) = (first.await.unwrap(), second.await.unwrap());
+            assert!(Arc::ptr_eq(&first, &second));
+
+            // the one cache they share is built once and indexed in full
+            let mut progress = cache::progress(&first.cache.pool).await.unwrap();
+            for _ in 0..200 {
+                if (progress.indexed, progress.laid, progress.complete) == (3, 3, true) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                progress = cache::progress(&first.cache.pool).await.unwrap();
+            }
+            assert_eq!(
+                (progress.indexed, progress.laid, progress.complete),
+                (3, 3, true)
+            );
+
+            shutdown(&app.state::<Repos>()).await;
             std::fs::remove_dir_all(dir).unwrap();
             std::fs::remove_dir_all(root).unwrap();
         });
