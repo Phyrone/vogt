@@ -185,6 +185,37 @@ test('a refresh far down the history puts the reader back on the same commit', a
 	await expect.element(subject(anchor)).toBeInTheDocument();
 });
 
+test('a refresh at the top of the history shows the new commit at the top', async () => {
+	const history = (version: number) => {
+		const added = version > 1 ? 1 : 0;
+		const hash = (position: number) => (position < added ? 'n0' : `c${position - added}`);
+		return {
+			rows: vi.fn(async (from: number, to: number): Promise<HistoryWindow> => ({
+				total: 50 + added,
+				lanes: 1,
+				rows: Array.from({ length: Math.min(to, 50 + added) - from }, (_, index) =>
+					row(hash(from + index), 'main', from + index)
+				),
+				edges: []
+			})),
+			locate: vi.fn(async (hash: string) => (hash === 'n0' ? 0 : Number(hash.slice(1)) + added)),
+			version,
+			progress: { indexed: 50, laid: 50, complete: true }
+		};
+	};
+	const props = { lines: main, trunk: 'main', head: 'c0', selected: null, picked: [] };
+	const { scroller, rerender } = await mountScrolling({ source: history(1), ...props });
+	await expect.element(subject('c0')).toBeInTheDocument();
+
+	const source = history(2);
+	await rerender({ source });
+	await expect.element(subject('n0')).toBeInTheDocument();
+	await new Promise((done) => requestAnimationFrame(done));
+	// nothing is kept in view: the list stays at the top, where the new commit is
+	expect(source.locate).not.toHaveBeenCalled();
+	expect(scroller.scrollTop).toBe(0);
+});
+
 test('an answer for a chunk let go while it was on its way is not kept', async () => {
 	const total = 2000;
 	const answer = (from: number, to: number, name: string): HistoryWindow => ({

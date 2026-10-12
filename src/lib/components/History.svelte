@@ -115,9 +115,11 @@
 		void only.join('\n');
 		untrack(() => {
 			// the first row in sight, not one of the overscan above it; a refresh before the last
-			// one's rows arrived keeps the place that one was to restore
+			// one's rows arrived keeps the place that one was to restore. A reader at the very top
+			// stays there instead, so that new commits show up above the rest
 			const top = scroller?.scrollTop ?? 0;
-			anchor = shown.nodes.find((row) => row.row * PITCH >= top)?.hash ?? anchor;
+			if (top === 0) anchor = undefined;
+			else anchor = shown.nodes.find((row) => row.row * PITCH >= top)?.hash ?? anchor;
 			epoch++;
 			requested.clear();
 			chunks.clear();
