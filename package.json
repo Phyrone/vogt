@@ -47,7 +47,7 @@
 		"@fontsource/barlow-semi-condensed": "^5.3.0",
 		"@inlang/paraglide-js": "^2.18.2",
 		"@inlang/plugin-m-function-matcher": "2.3.4",
-		"@inlang/plugin-message-format": "4.5.4",
+		"@inlang/plugin-message-format": "4.5.5",
 		"@playwright/test": "^1.60.0",
 		"@sveltejs/adapter-static": "^4.0.0",
 		"@sveltejs/kit": "^3.0.1",
