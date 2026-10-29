@@ -68,7 +68,7 @@ importers:
         version: 4.3.3(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
       '@tanstack/svelte-virtual':
         specifier: ^3.13.40
-        version: 3.13.47(svelte@5.57.2(@typescript-eslint/types@8.72.0))
+        version: 3.13.48(svelte@5.57.2(@typescript-eslint/types@8.72.0))
       '@tauri-apps/cli':
         specifier: ^2.12.1
         version: 2.12.4
@@ -1289,13 +1289,13 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
 
-  '@tanstack/svelte-virtual@3.13.47':
-    resolution: {integrity: sha512-lF1mdrnkoFR1+AubB/W0ifgryCHyO0iDBygWIf4LE/H0XAjHZQ/ui83EDXpWvdSrD9VV5bPR2pn5toVyHNq7xw==}
+  '@tanstack/svelte-virtual@3.13.48':
+    resolution: {integrity: sha512-XfK3Ofgegg1wEnSMOYOQXoJ/i7ekrSEp8JoJ1mxEZgMYnsVZZQ5EYP6ax3iSxhYRiZcwJArr0Z7S06zKVtPGWw==}
     peerDependencies:
       svelte: ^3.48.0 || ^4.0.0 || ^5.0.0
 
-  '@tanstack/virtual-core@3.19.6':
-    resolution: {integrity: sha512-CsTW892z23gy7IyxYTTorVu1uZWB+0N349rSMgKz4rFLPpLza7F7TpcCKeI5iUAwYQCt8QUlOU67J+KXCxtpGw==}
+  '@tanstack/virtual-core@3.19.7':
+    resolution: {integrity: sha512-gxy5SvH0mFRJ0YujtrflB/1HAu9Wn1KGvL0bjZfQkYVVMsIpQiwcf1mR06/ViN4NjllUb4HNCjqE9FGwgTvMCQ==}
 
   '@tauri-apps/api@2.12.4':
     resolution: {integrity: sha512-pVmfis+4zT8H0Qhp3xPZx9Ju7kpzvA6rr/PSJPyuwfvucTQ8sVt61NYU9KMkK703UFlYadFmjKA4HhybOtN0gg==}
@@ -3487,12 +3487,12 @@ snapshots:
       tailwindcss: 4.3.3
       vite: 8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
 
-  '@tanstack/svelte-virtual@3.13.47(svelte@5.57.2(@typescript-eslint/types@8.72.0))':
+  '@tanstack/svelte-virtual@3.13.48(svelte@5.57.2(@typescript-eslint/types@8.72.0))':
     dependencies:
-      '@tanstack/virtual-core': 3.19.6
+      '@tanstack/virtual-core': 3.19.7
       svelte: 5.57.2(@typescript-eslint/types@8.72.0)
 
-  '@tanstack/virtual-core@3.19.6': {}
+  '@tanstack/virtual-core@3.19.7': {}
 
   '@tauri-apps/api@2.12.4': {}
 
