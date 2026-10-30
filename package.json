@@ -37,7 +37,7 @@
 		"@tauri-apps/plugin-dialog": "^2.8.1",
 		"@tauri-apps/plugin-opener": "^2.7.0",
 		"@tauri-apps/plugin-sql": "~2.6.0",
-		"runed": "^0.37.1",
+		"runed": "^0.38.0",
 		"zod": "^4.6.5"
 	},
 	"devDependencies": {
