@@ -46,8 +46,8 @@ importers:
         specifier: ^2.18.2
         version: 2.29.3(eslint@10.13.0(jiti@2.7.0))(typescript@6.0.3)(vite@8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
       '@inlang/plugin-m-function-matcher':
-        specifier: 2.4.0
-        version: 2.4.0(@typescript-eslint/types@8.72.1)
+        specifier: 2.4.1
+        version: 2.4.1(@typescript-eslint/types@8.72.1)
       '@inlang/plugin-message-format':
         specifier: 4.5.6
         version: 4.5.6
@@ -795,8 +795,8 @@ packages:
       vite:
         optional: true
 
-  '@inlang/plugin-m-function-matcher@2.4.0':
-    resolution: {integrity: sha512-Kw3kMFYec6dp+ks9Sm/KcYlV5CNPRcR6wTdslEEQlnXKn5bVDh+FedWyzOjaCLV9Lrc3cL+RvUUxCcbjkn+pBg==}
+  '@inlang/plugin-m-function-matcher@2.4.1':
+    resolution: {integrity: sha512-HqZ+idvf2QAOozqdRYpFvCBz355fXfQLFGV/u4+fAHRkATXGYVE7iyNWajp3hUFu61OfzHZj1rdX/I8kGjN4Ng==}
 
   '@inlang/plugin-message-format@4.5.6':
     resolution: {integrity: sha512-6ORzOI5D2vER/r/sK/G5EDkCgpvIKBTJeJQ0wHQ86otQiJnr2WeulbiYBMz3D5oz7CYb1QSvtfK0Lxjprx4wqw==}
@@ -810,6 +810,10 @@ packages:
 
   '@inlang/sdk@4.1.0':
     resolution: {integrity: sha512-pPlaxyemcFMBcwBx31zbSNWwKORSLc2yv93v0uGCh4QgNh/kBRuLlBxbubmME6UJFsj+5nbao2WDZjz3Fzs+FA==}
+    engines: {node: '>=20.0.0'}
+
+  '@inlang/sdk@4.1.1':
+    resolution: {integrity: sha512-eeRnaW6mZPctXd8mwnATWEQgSg0J+EneUsBX2pJEl/7YRfosApCoc5aR4bHKwizLDd0CB3rtfuqteYirG5VSsg==}
     engines: {node: '>=20.0.0'}
 
   '@isaacs/fs-minipass@4.0.1':
@@ -3126,10 +3130,10 @@ snapshots:
       typescript: 6.0.3
       vite: 8.3.5(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
 
-  '@inlang/plugin-m-function-matcher@2.4.0(@typescript-eslint/types@8.72.1)':
+  '@inlang/plugin-m-function-matcher@2.4.1(@typescript-eslint/types@8.72.1)':
     dependencies:
       '@babel/parser': 7.29.9
-      '@inlang/sdk': 4.1.0
+      '@inlang/sdk': 4.1.1
       svelte: 5.57.3(@typescript-eslint/types@8.72.1)
     transitivePeerDependencies:
       - '@typescript-eslint/types'
@@ -3151,6 +3155,13 @@ snapshots:
       uuid: 14.0.3
 
   '@inlang/sdk@4.1.0':
+    dependencies:
+      '@lix-js/sdk': 0.20.1
+      '@sinclair/typebox': 0.31.30
+      kysely: 0.28.17
+      uuid: 14.0.3
+
+  '@inlang/sdk@4.1.1':
     dependencies:
       '@lix-js/sdk': 0.20.1
       '@sinclair/typebox': 0.31.30
