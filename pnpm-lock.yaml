@@ -119,7 +119,7 @@ importers:
         version: 0.8.1(prettier-plugin-svelte@4.1.1(prettier@3.9.10)(svelte@5.57.3(@typescript-eslint/types@8.72.1)))(prettier@3.9.10)
       skills:
         specifier: ^1.7.2
-        version: 1.7.4
+        version: 1.7.6
       sv:
         specifier: ^1.1.1
         version: 1.1.1
@@ -2434,8 +2434,8 @@ packages:
     resolution: {integrity: sha512-2wcC/oGxHis/BoHkkPwldgiPSYcpZK3JU28WoMVv55yHJgcZ8rlXvuG9iZggz+sU1d4bRgIGASwyWqjxu3FM0g==}
     engines: {node: '>=18'}
 
-  skills@1.7.4:
-    resolution: {integrity: sha512-lHZJksE8UImNAr+LL6unqq7jERjdFw5EJasm17srycwL7rXHGdCmgu1L1ttLxUO9i3rdH+QQig+px0icHqLmRw==}
+  skills@1.7.6:
+    resolution: {integrity: sha512-dAee29yRGin7ub6VHwmifLEfHrysGD41yq4RkY0gg7QQh0wyQKWfhiORGb/r6uNpKWc9A1GY8yowV07Lh+4rCg==}
     engines: {node: '>=22.20.0'}
     hasBin: true
 
@@ -4515,7 +4515,7 @@ snapshots:
       mrmime: 2.0.1
       totalist: 3.0.1
 
-  skills@1.7.4:
+  skills@1.7.6:
     dependencies:
       tar: 7.5.22
       yaml: 2.9.1
