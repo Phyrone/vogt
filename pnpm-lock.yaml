@@ -49,8 +49,8 @@ importers:
         specifier: 2.4.3
         version: 2.4.3(@typescript-eslint/types@8.72.1)
       '@inlang/plugin-message-format':
-        specifier: 4.5.7
-        version: 4.5.7
+        specifier: 4.6.0
+        version: 4.6.0
       '@playwright/test':
         specifier: ^1.60.0
         version: 1.64.1
@@ -798,18 +798,14 @@ packages:
   '@inlang/plugin-m-function-matcher@2.4.3':
     resolution: {integrity: sha512-0jlW4nZ1RDCFqLRZ1FO/dwvV7uhyuHLEzr7vudmCHqt3Qil5/mfCO5i5cvvls120lpoybmdbpwWy/Dvu5SMMGQ==}
 
-  '@inlang/plugin-message-format@4.5.7':
-    resolution: {integrity: sha512-rjRd0ityaVOIvmm1VLGLwnbwZbEHwS6EOyUPdiMhwYZ0JJmIMoLG+BxozHnwMB9QH+R1lqpLYbCZmlTDBtG4zg==}
+  '@inlang/plugin-message-format@4.6.0':
+    resolution: {integrity: sha512-DK2GZvypDygLchnUaFK/RdCIm2baiRlQftOiesGNKDtjNqioqWHnnu0zg6NKNlo3kD42h5xlRCke7zEjBFzZrg==}
 
   '@inlang/recommend-sherlock@0.2.1':
     resolution: {integrity: sha512-ckv8HvHy/iTqaVAEKrr+gnl+p3XFNwe5D2+6w6wJk2ORV2XkcRkKOJ/XsTUJbPSiyi4PI+p+T3bqbmNx/rDUlg==}
 
   '@inlang/sdk@4.0.4':
     resolution: {integrity: sha512-OJhVSGJa/Ak52WncgqIPHr9TyVJ1DuoublcmtNo9H8apoVn4Dr1DJNxUxawCCc01QmMSg8qoY8GrTV8SVIu1lg==}
-    engines: {node: '>=20.0.0'}
-
-  '@inlang/sdk@4.1.1':
-    resolution: {integrity: sha512-eeRnaW6mZPctXd8mwnATWEQgSg0J+EneUsBX2pJEl/7YRfosApCoc5aR4bHKwizLDd0CB3rtfuqteYirG5VSsg==}
     engines: {node: '>=20.0.0'}
 
   '@inlang/sdk@4.2.0':
@@ -3063,9 +3059,9 @@ snapshots:
     transitivePeerDependencies:
       - '@typescript-eslint/types'
 
-  '@inlang/plugin-message-format@4.5.7':
+  '@inlang/plugin-message-format@4.6.0':
     dependencies:
-      '@inlang/sdk': 4.1.1
+      '@inlang/sdk': 4.2.0
       '@sinclair/typebox': 0.31.30
 
   '@inlang/recommend-sherlock@0.2.1':
@@ -3073,13 +3069,6 @@ snapshots:
       comment-json: 4.6.2
 
   '@inlang/sdk@4.0.4':
-    dependencies:
-      '@lix-js/sdk': 0.20.1
-      '@sinclair/typebox': 0.31.30
-      kysely: 0.28.17
-      uuid: 14.0.3
-
-  '@inlang/sdk@4.1.1':
     dependencies:
       '@lix-js/sdk': 0.20.1
       '@sinclair/typebox': 0.31.30
