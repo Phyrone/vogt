@@ -14,7 +14,7 @@ repository = "https://github.com/Phyrone/vogt"
 git2 = { version = "0.20", default-features = false }
 vogt-macros = { path = "crates/vogt-macros" }
 # the version tauri-plugin-sql uses, to share its connection pool
-sqlx = { version = "0.8", default-features = false, features = ["sqlite", "macros"] }
+sqlx = { version = "0.9", default-features = false, features = ["sqlite", "macros"] }
 notify = "8"
 # tauri runs on tokio; the index workers need its notifications and timers,
 # and the tests its runtime and `#[tokio::test]`
