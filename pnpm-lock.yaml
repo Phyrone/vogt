@@ -86,7 +86,7 @@ importers:
         version: 5.1.0(vitest@5.1.0)
       daisyui:
         specifier: ^5.7.47
-        version: 5.7.50
+        version: 5.8.0
       drizzle-kit:
         specifier: ^0.31.10
         version: 0.31.11
@@ -1644,8 +1644,8 @@ packages:
     engines: {node: '>=4'}
     hasBin: true
 
-  daisyui@5.7.50:
-    resolution: {integrity: sha512-+/LRqnTCoc7s/bJEKKwtJSwzeXCVdAmRdNmZeZzgHCaQ9PJyl7j+2V2U32GQDMyD+VDkP9e/+JGoC72Y1hLk7w==}
+  daisyui@5.8.0:
+    resolution: {integrity: sha512-pIdff0OLXTgCNvbRZlY2W2qjCnJd7DgRLyTpzhHgg+JqMzVDsQoRzJXyDKyPCOUYvTFHlOt97+JCeGyxQav4Zw==}
 
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
@@ -3822,7 +3822,7 @@ snapshots:
 
   cssesc@3.0.0: {}
 
-  daisyui@5.7.50: {}
+  daisyui@5.8.0: {}
 
   debug@4.4.3:
     dependencies:
