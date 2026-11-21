@@ -55,7 +55,7 @@
 		"@tailwindcss/vite": "^4.3.0",
 		"@tanstack/svelte-virtual": "^3.13.40",
 		"@tauri-apps/cli": "^2.12.1",
-		"@types/node": "^24",
+		"@types/node": "^26.0.0",
 		"@vitest/browser-playwright": "^5.0.3",
 		"@vitest/coverage-v8": "^5.0.3",
 		"@vitest/ui": "^5.0.3",
