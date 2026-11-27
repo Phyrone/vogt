@@ -122,7 +122,7 @@ importers:
         version: 1.9.0
       sv:
         specifier: ^1.1.1
-        version: 1.6.0
+        version: 1.7.0
       svelte:
         specifier: ^5.57.2
         version: 5.58.0(@typescript-eslint/types@8.73.0)
@@ -2408,8 +2408,8 @@ packages:
   std-env@4.3.0:
     resolution: {integrity: sha512-OtU/EgQ1kIm5KwqQpBC6ZEMXrZRui11w8zgfTWp8cdO9B8OaPsbA8bTHO2P+HNo1VlUTGMVBwPhydu6poeXiag==}
 
-  sv@1.6.0:
-    resolution: {integrity: sha512-y5bGGiX36TNmItqz0SMRuAm8EChq0bmwR83FsxH4CQ1wKNcSnq3QpT6STsn1VchJUc71vF1TqMA5dGhMpl3WyQ==}
+  sv@1.7.0:
+    resolution: {integrity: sha512-iJCPjhS7WX2pz6fUPLKP0dlZvZJwvpZmWLnRgdTT27UBzxfpKXK9qqhSVGIsVt9KRYqUsimrYe1Fd6Z78S8Dog==}
     hasBin: true
 
   svelte-check@4.7.8:
@@ -4477,7 +4477,7 @@ snapshots:
 
   std-env@4.3.0: {}
 
-  sv@1.6.0:
+  sv@1.7.0:
     dependencies:
       '@sveltejs/sv-utils': 1.1.3
 
